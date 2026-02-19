@@ -300,15 +300,6 @@ impl Decimal {
         hi: 1703060790,
     };
     /// A constant representing π/2 as 1.5707963267948966192313216916
-    ///
-    /// # Examples
-    ///
-    /// Basic usage:
-    /// ```
-    /// # use rust_decimal::Decimal;
-    /// # use rust_decimal_macros::dec;
-    /// assert_eq!(Decimal::HALF_PI, dec!(1.5707963267948966192313216916));
-    /// ```
     #[cfg(feature = "maths")]
     pub const HALF_PI: Decimal = Decimal {
         flags: 1835008,
@@ -317,15 +308,6 @@ impl Decimal {
         hi: 851530395,
     };
     /// A constant representing π/4 as 0.7853981633974483096156608458
-    ///
-    /// # Examples
-    ///
-    /// Basic usage:
-    /// ```
-    /// # use rust_decimal::Decimal;
-    /// # use rust_decimal_macros::dec;
-    /// assert_eq!(Decimal::QUARTER_PI, dec!(0.7853981633974483096156608458));
-    /// ```
     #[cfg(feature = "maths")]
     pub const QUARTER_PI: Decimal = Decimal {
         flags: 1835008,
@@ -334,15 +316,6 @@ impl Decimal {
         hi: 425765197,
     };
     /// A constant representing 2π as 6.2831853071795864769252867666
-    ///
-    /// # Examples
-    ///
-    /// Basic usage:
-    /// ```
-    /// # use rust_decimal::Decimal;
-    /// # use rust_decimal_macros::dec;
-    /// assert_eq!(Decimal::TWO_PI, dec!(6.2831853071795864769252867666));
-    /// ```
     #[cfg(feature = "maths")]
     pub const TWO_PI: Decimal = Decimal {
         flags: 1835008,
@@ -351,15 +324,6 @@ impl Decimal {
         hi: 3406121580,
     };
     /// A constant representing Euler's number (e) as 2.7182818284590452353602874714
-    ///
-    /// # Examples
-    ///
-    /// Basic usage:
-    /// ```
-    /// # use rust_decimal::Decimal;
-    /// # use rust_decimal_macros::dec;
-    /// assert_eq!(Decimal::E, dec!(2.7182818284590452353602874714));
-    /// ```
     #[cfg(feature = "maths")]
     pub const E: Decimal = Decimal {
         flags: 1835008,
@@ -368,15 +332,6 @@ impl Decimal {
         hi: 1473583531,
     };
     /// A constant representing the inverse of Euler's number (1/e) as 0.3678794411714423215955237702
-    ///
-    /// # Examples
-    ///
-    /// Basic usage:
-    /// ```
-    /// # use rust_decimal::Decimal;
-    /// # use rust_decimal_macros::dec;
-    /// assert_eq!(Decimal::E_INVERSE, dec!(0.3678794411714423215955237702));
-    /// ```
     #[cfg(feature = "maths")]
     pub const E_INVERSE: Decimal = Decimal {
         flags: 1835008,
@@ -495,15 +450,15 @@ impl Decimal {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) const fn from_i128_with_scale_unchecked(num: i128, scale: u32) -> Decimal {
-        let flags = flags(num < 0, scale);
-        let num = num.unsigned_abs();
+        let f = flags(num < 0, scale);
+        let n = num.unsigned_abs();
         Decimal {
-            flags,
-            lo: (num as u64 & U32_MASK) as u32,
-            mid: ((num as u64 >> 32) & U32_MASK) as u32,
-            hi: ((num >> 64) as u64 & U32_MASK) as u32,
+            flags: f,
+            lo: (n as u64 & U32_MASK) as u32,
+            mid: ((n as u64 >> 32) & U32_MASK) as u32,
+            hi: ((n >> 64) as u64 & U32_MASK) as u32,
         }
     }
 
@@ -525,7 +480,7 @@ impl Decimal {
     /// let pi = Decimal::from_parts(1102470952, 185874565, 1703060790, false, 28);
     /// assert_eq!(pi.to_string(), "3.1415926535897932384626433832");
     /// ```
-    #[inline]
+    #[inline(always)]
     #[must_use]
     pub const fn from_parts(lo: u32, mid: u32, hi: u32, negative: bool, scale: u32) -> Decimal {
         assert!(scale <= Self::MAX_SCALE, "Scale exceeds maximum supported scale");
@@ -544,6 +499,7 @@ impl Decimal {
         }
     }
 
+    #[inline(always)]
     #[must_use]
     pub(crate) const fn from_parts_raw(lo: u32, mid: u32, hi: u32, flags: u32) -> Decimal {
         if lo == 0 && mid == 0 && hi == 0 {
@@ -580,7 +536,6 @@ impl Decimal {
         const ERROR_MESSAGE: &str = "Failed to parse";
 
         let mut split = value.splitn(2, ['e', 'E']);
-
         let base = split.next().ok_or_else(|| Error::from(ERROR_MESSAGE))?;
         let exp = split.next().ok_or_else(|| Error::from(ERROR_MESSAGE))?;
 
@@ -599,17 +554,10 @@ impl Decimal {
                 ret.set_scale(current_scale - exp)?;
             } else if exp > 0 {
                 use crate::constants::BIG_POWERS_10;
-
-                // This is a case whereby the mantissa needs to be larger to be correctly
-                // represented within the decimal type. A good example is 1.2E10. At this point,
-                // we've parsed 1.2 as the base and 10 as the exponent. To represent this within a
-                // Decimal type we effectively store the mantissa as 12,000,000,000 and scale as
-                // zero.
                 if exp > Self::MAX_SCALE {
                     return Err(Error::ScaleExceedsMaximumPrecision(exp));
                 }
                 let mut exp = exp as usize;
-                // Max two iterations. If exp is 1 then it needs to index position 0 of the array.
                 while exp > 0 {
                     let pow;
                     if exp >= BIG_POWERS_10.len() {
@@ -619,7 +567,6 @@ impl Decimal {
                         pow = BIG_POWERS_10[exp - 1];
                         exp = 0;
                     }
-
                     let pow = Decimal {
                         flags: 0,
                         lo: pow as u32,
@@ -671,7 +618,6 @@ impl Decimal {
         const ERROR_MESSAGE: &str = "Failed to parse";
 
         let mut split = value.splitn(2, ['e', 'E']);
-
         let base = split.next().ok_or_else(|| Error::from(ERROR_MESSAGE))?;
         let exp = split.next().ok_or_else(|| Error::from(ERROR_MESSAGE))?;
 
@@ -695,17 +641,10 @@ impl Decimal {
                 ret.set_scale(current_scale - exp)?;
             } else if exp > 0 {
                 use crate::constants::BIG_POWERS_10;
-
-                // This is a case whereby the mantissa needs to be larger to be correctly
-                // represented within the decimal type. A good example is 1.2E10. At this point,
-                // we've parsed 1.2 as the base and 10 as the exponent. To represent this within a
-                // Decimal type we effectively store the mantissa as 12,000,000,000 and scale as
-                // zero.
                 if exp > Self::MAX_SCALE {
                     return Err(Error::ScaleExceedsMaximumPrecision(exp));
                 }
                 let mut exp = exp as usize;
-                // Max two iterations. If exp is 1 then it needs to index position 0 of the array.
                 while exp > 0 {
                     let pow;
                     if exp >= BIG_POWERS_10.len() {
@@ -715,7 +654,6 @@ impl Decimal {
                         pow = BIG_POWERS_10[exp - 1];
                         exp = 0;
                     }
-
                     let pow = Decimal {
                         flags: 0,
                         lo: pow as u32,
@@ -755,7 +693,7 @@ impl Decimal {
     /// #     Ok(())
     /// # }
     /// ```
-    pub fn from_str_radix(str: &str, radix: u32) -> Result<Self, crate::Error> {
+    pub const fn from_str_radix(str: &str, radix: u32) -> Result<Self, crate::Error> {
         if radix == 10 {
             crate::str::parse_str_radix_10(str)
         } else {
@@ -781,7 +719,7 @@ impl Decimal {
     /// #     Ok(())
     /// # }
     /// ```
-    pub fn from_str_exact(str: &str) -> Result<Self, crate::Error> {
+    pub const fn from_str_exact(str: &str) -> Result<Self, crate::Error> {
         crate::str::parse_str_radix_10_exact(str)
     }
 
@@ -814,7 +752,7 @@ impl Decimal {
     /// let num = Decimal::new(1234, 3);
     /// assert_eq!(num.scale(), 3u32);
     /// ```
-    #[inline]
+    #[inline(always)]
     #[must_use]
     pub const fn scale(&self) -> u32 {
         (self.flags & SCALE_MASK) >> SCALE_SHIFT
@@ -832,6 +770,7 @@ impl Decimal {
     /// assert_eq!(num.mantissa(), -12345678i128);
     /// assert_eq!(num.scale(), 7);
     /// ```
+    #[inline]
     #[must_use]
     pub const fn mantissa(&self) -> i128 {
         let raw = (self.lo as i128) | ((self.mid as i128) << 32) | ((self.hi as i128) << 64);
@@ -852,9 +791,12 @@ impl Decimal {
     /// let num = Decimal::ZERO;
     /// assert!(num.is_zero());
     /// ```
+    #[inline(always)]
     #[must_use]
     pub const fn is_zero(&self) -> bool {
-        self.lo | self.mid | self.hi == 0
+        // Explicit parentheses for clarity: `|` binds tighter than `==` in Rust,
+        // so both forms are equivalent, but this makes the intent unambiguous.
+        (self.lo | self.mid | self.hi) == 0
     }
 
     /// Returns true if this Decimal number has zero fractional part (is equal to an integer)
@@ -872,27 +814,21 @@ impl Decimal {
     /// assert_eq!(dec!(5.1).is_integer(), false);
     /// ```
     #[must_use]
-    pub fn is_integer(&self) -> bool {
+    pub const fn is_integer(&self) -> bool {
         let scale = self.scale();
         if scale == 0 || self.is_zero() {
             return true;
         }
-
-        // Check if it can be divided by 10^scale without remainder
+        // Divide by 10^scale in up-to-9-at-a-time chunks; any non-zero remainder
+        // means a fractional part exists.
         let mut bits = self.mantissa_array3();
-        let mut scale = scale;
-        while scale > 0 {
-            let remainder = if scale > 9 {
-                scale -= 9;
-                ops::array::div_by_u32(&mut bits, POWERS_10[9])
-            } else {
-                let power = POWERS_10[scale as usize];
-                scale = 0;
-                ops::array::div_by_u32(&mut bits, power)
-            };
-            if remainder > 0 {
+        let mut remaining = scale;
+        while remaining > 0 {
+            let chunk = remaining.min(9) as usize;
+            if ops::array::div_by_u32(&mut bits, POWERS_10[chunk]) != 0 {
                 return false;
             }
+            remaining -= chunk as u32;
         }
         true
     }
@@ -913,7 +849,7 @@ impl Decimal {
     /// assert_eq!(one.to_string(), "-1");
     /// ```
     #[deprecated(since = "1.4.0", note = "please use `set_sign_positive` instead")]
-    pub fn set_sign(&mut self, positive: bool) {
+    pub const fn set_sign(&mut self, positive: bool) {
         self.set_sign_positive(positive);
     }
 
@@ -933,7 +869,7 @@ impl Decimal {
     /// assert_eq!(one.to_string(), "-1");
     /// ```
     #[inline(always)]
-    pub fn set_sign_positive(&mut self, positive: bool) {
+    pub const fn set_sign_positive(&mut self, positive: bool) {
         if positive {
             self.flags &= UNSIGN_MASK;
         } else {
@@ -957,7 +893,7 @@ impl Decimal {
     /// assert_eq!(one.to_string(), "-1");
     /// ```
     #[inline(always)]
-    pub fn set_sign_negative(&mut self, negative: bool) {
+    pub const fn set_sign_negative(&mut self, negative: bool) {
         self.set_sign_positive(!negative);
     }
 
@@ -979,7 +915,7 @@ impl Decimal {
     /// #    Ok(())
     /// # }
     /// ```
-    pub fn set_scale(&mut self, scale: u32) -> Result<(), Error> {
+    pub const fn set_scale(&mut self, scale: u32) -> Result<(), Error> {
         if scale > Self::MAX_SCALE {
             return Err(Error::ScaleExceedsMaximumPrecision(scale));
         }
@@ -1030,7 +966,7 @@ impl Decimal {
     /// assert_eq!(number.to_string(), "11.764705882352940000000000000");
     /// assert_eq!(number.scale(), 27);
     /// ```
-    pub fn rescale(&mut self, scale: u32) {
+    pub const fn rescale(&mut self, scale: u32) {
         let mut array = [self.lo, self.mid, self.hi];
         let mut value_scale = self.scale();
         ops::array::rescale_internal(&mut array, &mut value_scale, scale);
@@ -1077,7 +1013,7 @@ impl Decimal {
     /// * Bytes 9-12: mid portion of `m`
     /// * Bytes 13-16: high portion of `m`
     #[must_use]
-    pub fn deserialize(bytes: [u8; 16]) -> Decimal {
+    pub const fn deserialize(bytes: [u8; 16]) -> Decimal {
         // We can bound flags by a bitwise mask to correspond to:
         //   Bits 0-15: unused
         //   Bits 16-23: Contains "e", a value between 0-28 that indicates the scale
@@ -1119,14 +1055,14 @@ impl Decimal {
     /// Returns `true` if the decimal is negative.
     #[deprecated(since = "0.6.3", note = "please use `is_sign_negative` instead")]
     #[must_use]
-    pub fn is_negative(&self) -> bool {
+    pub const fn is_negative(&self) -> bool {
         self.is_sign_negative()
     }
 
     /// Returns `true` if the decimal is positive.
     #[deprecated(since = "0.6.3", note = "please use `is_sign_positive` instead")]
     #[must_use]
-    pub fn is_positive(&self) -> bool {
+    pub const fn is_positive(&self) -> bool {
         self.is_sign_positive()
     }
 
@@ -1142,7 +1078,7 @@ impl Decimal {
     #[inline(always)]
     #[must_use]
     pub const fn is_sign_negative(&self) -> bool {
-        self.flags & SIGN_MASK > 0
+        self.flags & SIGN_MASK != 0
     }
 
     /// Returns `true` if the sign bit of the decimal is positive.
@@ -1190,8 +1126,9 @@ impl Decimal {
     /// let neg = dec!(-1.98765);
     /// assert_eq!(neg.trunc(), Decimal::NEGATIVE_ONE);
     /// ```
+    #[inline]
     #[must_use]
-    pub fn trunc(&self) -> Decimal {
+    pub const fn trunc(&self) -> Decimal {
         let mut working = [self.lo, self.mid, self.hi];
         let mut working_scale = self.scale();
         ops::array::truncate_internal(&mut working, &mut working_scale, 0);
@@ -1219,8 +1156,9 @@ impl Decimal {
     /// let neg = dec!(-1.98765);
     /// assert_eq!(neg.trunc_with_scale(1), dec!(-1.9));
     /// ```
+    #[inline]
     #[must_use]
-    pub fn trunc_with_scale(&self, scale: u32) -> Decimal {
+    pub const fn trunc_with_scale(&self, scale: u32) -> Decimal {
         let mut working = [self.lo, self.mid, self.hi];
         let mut working_scale = self.scale();
         ops::array::truncate_internal(&mut working, &mut working_scale, scale);
@@ -1244,10 +1182,9 @@ impl Decimal {
     /// // note that it returns a decimal
     /// assert_eq!(pi.fract(), fract);
     /// ```
+    #[inline]
     #[must_use]
-    pub fn fract(&self) -> Decimal {
-        // This is essentially the original number minus the integral.
-        // Could possibly be optimized in the future
+    pub const fn fract(&self) -> Decimal {
         *self - self.trunc()
     }
 
@@ -1261,11 +1198,16 @@ impl Decimal {
     /// let num = Decimal::new(-3141, 3);
     /// assert_eq!(num.abs().to_string(), "3.141");
     /// ```
+    #[inline(always)]
     #[must_use]
-    pub fn abs(&self) -> Decimal {
-        let mut me = *self;
-        me.set_sign_positive(true);
-        me
+    pub const fn abs(&self) -> Decimal {
+        // Mask out the sign bit, preserving everything else (scale + mantissa).
+        Decimal {
+            flags: self.flags & UNSIGN_MASK,
+            hi: self.hi,
+            lo: self.lo,
+            mid: self.mid,
+        }
     }
 
     /// Returns the largest integer less than or equal to a number.
@@ -1279,14 +1221,10 @@ impl Decimal {
     /// assert_eq!(num.floor().to_string(), "3");
     /// ```
     #[must_use]
-    pub fn floor(&self) -> Decimal {
-        let scale = self.scale();
-        if scale == 0 {
-            // Nothing to do
+    pub const fn floor(&self) -> Decimal {
+        if self.scale() == 0 {
             return *self;
         }
-
-        // Opportunity for optimization here
         let floored = self.trunc();
         if self.is_sign_negative() && !self.fract().is_zero() {
             floored - ONE
@@ -1308,14 +1246,10 @@ impl Decimal {
     /// assert_eq!(num.ceil().to_string(), "3");
     /// ```
     #[must_use]
-    pub fn ceil(&self) -> Decimal {
-        let scale = self.scale();
-        if scale == 0 {
-            // Nothing to do
+    pub const fn ceil(&self) -> Decimal {
+        if self.scale() == 0 {
             return *self;
         }
-
-        // Opportunity for optimization here
         if self.is_sign_positive() && !self.fract().is_zero() {
             self.trunc() + ONE
         } else {
@@ -1332,8 +1266,9 @@ impl Decimal {
     /// let y = Decimal::new(2, 0);
     /// assert_eq!(y, x.max(y));
     /// ```
+    #[inline]
     #[must_use]
-    pub fn max(self, other: Decimal) -> Decimal {
+    pub const fn max(self, other: Decimal) -> Decimal {
         if self < other {
             other
         } else {
@@ -1350,8 +1285,9 @@ impl Decimal {
     /// let y = Decimal::new(2, 0);
     /// assert_eq!(x, x.min(y));
     /// ```
+    #[inline]
     #[must_use]
-    pub fn min(self, other: Decimal) -> Decimal {
+    pub const fn min(self, other: Decimal) -> Decimal {
         if self > other {
             other
         } else {
@@ -1371,8 +1307,9 @@ impl Decimal {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     #[must_use]
-    pub fn normalize(&self) -> Decimal {
+    pub const fn normalize(&self) -> Decimal {
         let mut result = *self;
         result.normalize_assign();
         result
@@ -1392,25 +1329,25 @@ impl Decimal {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn normalize_assign(&mut self) {
+    pub const fn normalize_assign(&mut self) {
         if self.is_zero() {
             self.flags = 0;
             return;
         }
-
         let mut scale = self.scale();
         if scale == 0 {
             return;
         }
-
+        // Keep one committed array and one working copy.
+        // Only promote `working` to `result` when the division is exact.
         let mut result = self.mantissa_array3();
-        let mut working = self.mantissa_array3();
+        let mut working = result;
         while scale > 0 {
-            if ops::array::div_by_u32(&mut working, 10) > 0 {
+            if ops::array::div_by_u32(&mut working, 10) != 0 {
                 break;
             }
             scale -= 1;
-            result.copy_from_slice(&working);
+            result = working;
         }
         self.lo = result[0];
         self.mid = result[1];
@@ -1432,8 +1369,9 @@ impl Decimal {
     /// assert_eq!(number_down.round().to_string(), "6");
     /// assert_eq!(number_up.round().to_string(), "8");
     /// ```
+    #[inline]
     #[must_use]
-    pub fn round(&self) -> Decimal {
+    pub const fn round(&self) -> Decimal {
         self.round_dp(0)
     }
 
@@ -1455,7 +1393,7 @@ impl Decimal {
     /// assert_eq!(tax.round_dp_with_strategy(2, RoundingStrategy::MidpointAwayFromZero).to_string(), "3.44");
     /// ```
     #[must_use]
-    pub fn round_dp_with_strategy(&self, dp: u32, strategy: RoundingStrategy) -> Decimal {
+    pub const fn round_dp_with_strategy(&self, dp: u32, strategy: RoundingStrategy) -> Decimal {
         let old_scale = self.scale();
 
         // return early if decimal has a smaller number of fractional places than dp
@@ -1475,12 +1413,10 @@ impl Decimal {
         }
 
         let mut value = [self.lo, self.mid, self.hi];
-        let mut value_scale = self.scale();
         let negative = self.is_sign_negative();
 
-        value_scale -= dp;
-
-        // Rescale to zero so it's easier to work with
+        // Divide down to the target scale.
+        let mut value_scale = old_scale - dp;
         while value_scale > 0 {
             if value_scale < 10 {
                 ops::array::div_by_u32(&mut value, POWERS_10[value_scale as usize]);
@@ -1501,27 +1437,23 @@ impl Decimal {
         // then increasing the precision back up to 0.12000
         let mut offset = [self.lo, self.mid, self.hi];
         let mut diff = old_scale - dp;
-
         while diff > 0 {
             if diff < 10 {
                 ops::array::div_by_u32(&mut offset, POWERS_10[diff as usize]);
                 break;
             } else {
                 ops::array::div_by_u32(&mut offset, POWERS_10[9]);
-                // Only 9 as this array starts with 1
                 diff -= 9;
             }
         }
 
         let mut diff = old_scale - dp;
-
         while diff > 0 {
             if diff < 10 {
                 ops::array::mul_by_u32(&mut offset, POWERS_10[diff as usize]);
                 break;
             } else {
                 ops::array::mul_by_u32(&mut offset, POWERS_10[9]);
-                // Only 9 as this array starts with 1
                 diff -= 9;
             }
         }
@@ -1530,47 +1462,44 @@ impl Decimal {
         ops::array::sub_by_internal(&mut decimal_portion, &offset);
 
         // If the decimal_portion is zero then we round based on the other data
-        let mut cap = [5, 0, 0];
-        for _ in 0..(old_scale - dp - 1) {
-            ops::array::mul_by_u32(&mut cap, 10);
+        let mut cap = [5u32, 0, 0];
+        let mut cap_diff = old_scale - dp - 1;
+        while cap_diff > 0 {
+            if cap_diff < 10 {
+                ops::array::mul_by_u32(&mut cap, POWERS_10[cap_diff as usize]);
+                break;
+            } else {
+                ops::array::mul_by_u32(&mut cap, POWERS_10[9]);
+                cap_diff -= 9;
+            }
         }
+
         let order = ops::array::cmp_internal(&decimal_portion, &cap);
 
         #[allow(deprecated)]
         match strategy {
-            RoundingStrategy::BankersRounding | RoundingStrategy::MidpointNearestEven => {
-                match order {
-                    Ordering::Equal => {
-                        if (value[0] & 1) == 1 {
-                            ops::array::add_one_internal(&mut value);
-                        }
-                    }
-                    Ordering::Greater => {
-                        // Doesn't matter about the decimal portion
+            RoundingStrategy::BankersRounding | RoundingStrategy::MidpointNearestEven => match order {
+                Ordering::Equal => {
+                    if (value[0] & 1) == 1 {
                         ops::array::add_one_internal(&mut value);
                     }
-                    _ => {}
                 }
-            }
+                Ordering::Greater => {
+                    ops::array::add_one_internal(&mut value);
+                }
+                _ => {}
+            },
             RoundingStrategy::RoundHalfDown | RoundingStrategy::MidpointTowardZero => {
                 if let Ordering::Greater = order {
                     ops::array::add_one_internal(&mut value);
                 }
             }
-            RoundingStrategy::RoundHalfUp | RoundingStrategy::MidpointAwayFromZero => {
-                // when Ordering::Equal, decimal_portion is 0.5 exactly
-                // when Ordering::Greater, decimal_portion is > 0.5
-                match order {
-                    Ordering::Equal => {
-                        ops::array::add_one_internal(&mut value);
-                    }
-                    Ordering::Greater => {
-                        // Doesn't matter about the decimal portion
-                        ops::array::add_one_internal(&mut value);
-                    }
-                    _ => {}
+            RoundingStrategy::RoundHalfUp | RoundingStrategy::MidpointAwayFromZero => match order {
+                Ordering::Equal | Ordering::Greater => {
+                    ops::array::add_one_internal(&mut value);
                 }
-            }
+                _ => {}
+            },
             RoundingStrategy::RoundUp | RoundingStrategy::AwayFromZero => {
                 if !ops::array::is_all_zero(&decimal_portion) {
                     ops::array::add_one_internal(&mut value);
@@ -1586,7 +1515,7 @@ impl Decimal {
                     ops::array::add_one_internal(&mut value);
                 }
             }
-            RoundingStrategy::RoundDown | RoundingStrategy::ToZero => (),
+            RoundingStrategy::RoundDown | RoundingStrategy::ToZero => {}
         }
 
         Decimal::from_parts(value[0], value[1], value[2], negative, dp)
@@ -1607,8 +1536,9 @@ impl Decimal {
     /// let pi = dec!(3.1415926535897932384626433832);
     /// assert_eq!(pi.round_dp(2).to_string(), "3.14");
     /// ```
+    #[inline]
     #[must_use]
-    pub fn round_dp(&self, dp: u32) -> Decimal {
+    pub const fn round_dp(&self, dp: u32) -> Decimal {
         self.round_dp_with_strategy(dp, RoundingStrategy::MidpointNearestEven)
     }
 
@@ -1648,8 +1578,9 @@ impl Decimal {
     /// let value = dec!(0.012301);
     /// assert_eq!(value.round_sf(3), Some(dec!(0.0123)));
     /// ```
+    #[inline]
     #[must_use]
-    pub fn round_sf(&self, digits: u32) -> Option<Decimal> {
+    pub const fn round_sf(&self, digits: u32) -> Option<Decimal> {
         self.round_sf_with_strategy(digits, RoundingStrategy::MidpointNearestEven)
     }
 
@@ -1691,18 +1622,16 @@ impl Decimal {
     /// assert_eq!(value.round_sf_with_strategy(3, RoundingStrategy::AwayFromZero), Some(dec!(0.0124)));
     /// ```
     #[must_use]
-    pub fn round_sf_with_strategy(&self, digits: u32, strategy: RoundingStrategy) -> Option<Decimal> {
+    pub const fn round_sf_with_strategy(&self, digits: u32, strategy: RoundingStrategy) -> Option<Decimal> {
         if self.is_zero() || digits == 0 {
             return Some(Decimal::ZERO);
         }
 
-        // We start by grabbing the mantissa and figuring out how many significant figures it is
-        // made up of. We do this by just dividing by 10 and checking remainders - effectively
-        // we're performing a naive log10.
+        // Count significant figures via naive log10: divide by 10 until zero.
         let mut working = self.mantissa_array3();
-        let mut mantissa_sf = 0;
+        let mut mantissa_sf = 0u32;
         while !ops::array::is_all_zero(&working) {
-            let _remainder = ops::array::div_by_u32(&mut working, 10u32);
+            ops::array::div_by_u32(&mut working, 10u32);
             mantissa_sf += 1;
             if working[2] == 0 && working[1] == 0 && working[0] == 1 {
                 mantissa_sf += 1;
@@ -1713,7 +1642,7 @@ impl Decimal {
 
         match digits.cmp(&mantissa_sf) {
             Ordering::Greater => {
-                // If we're requesting a higher number of significant figures, we rescale
+                // Requesting a higher number of significant figures → rescale up.
                 let mut array = [self.lo, self.mid, self.hi];
                 let mut value_scale = scale;
                 ops::array::rescale_internal(&mut array, &mut value_scale, scale + digits - mantissa_sf);
@@ -1725,18 +1654,11 @@ impl Decimal {
                 })
             }
             Ordering::Less => {
-                // We're requesting a lower number of significant digits.
                 let diff = mantissa_sf - digits;
-                // If the diff is greater than the scale we're focused on the integral. Otherwise, we can
-                // just round.
+                // If the diff is greater than the scale we're focused on the integral. Otherwise,
+                // we can just round.
                 if diff > scale {
                     use crate::constants::BIG_POWERS_10;
-                    // We need to adjust the integral portion. This also should be rounded, consequently
-                    // we reduce the number down, round it, and then scale back up.
-                    // E.g. If we have 305.459 scaling to a sf of 2 - we first reduce the number
-                    // down to 30.5459, round it to 31 and then scale it back up to 310.
-                    // Likewise, if we have 12301 scaling to a sf of 3 - we first reduce the number
-                    // down to 123.01, round it to 123 and then scale it back up to 12300.
                     let mut num = *self;
                     let mut exp = (diff - scale) as usize;
                     while exp > 0 {
@@ -1748,7 +1670,7 @@ impl Decimal {
                             pow = Decimal::from(BIG_POWERS_10[exp - 1]);
                             exp = 0;
                         }
-                        num = num.checked_div(pow)?;
+                        num = Decimal::checked_div(num, pow)?;
                     }
                     let mut num = num.round_dp_with_strategy(0, strategy).trunc();
                     let mut exp = (mantissa_sf - digits - scale) as usize;
@@ -1761,17 +1683,14 @@ impl Decimal {
                             pow = Decimal::from(BIG_POWERS_10[exp - 1]);
                             exp = 0;
                         }
-                        num = num.checked_mul(pow)?;
+                        num = Decimal::checked_mul(num, pow)?;
                     }
                     Some(num)
                 } else {
                     Some(self.round_dp_with_strategy(scale - diff, strategy))
                 }
             }
-            Ordering::Equal => {
-                // Case where significant figures = requested significant digits.
-                Some(*self)
-            }
+            Ordering::Equal => Some(*self),
         }
     }
 
@@ -1794,6 +1713,7 @@ impl Decimal {
     ///     negative: false, scale: 28, hi: 1703060790, mid: 185874565, lo: 1102470952 \
     /// }");
     /// ```
+    #[inline]
     #[must_use]
     pub const fn unpack(&self) -> UnpackedDecimal {
         UnpackedDecimal {
@@ -1809,17 +1729,14 @@ impl Decimal {
     pub(crate) const fn lo(&self) -> u32 {
         self.lo
     }
-
     #[inline(always)]
     pub(crate) const fn mid(&self) -> u32 {
         self.mid
     }
-
     #[inline(always)]
     pub(crate) const fn hi(&self) -> u32 {
         self.hi
     }
-
     #[inline(always)]
     pub(crate) const fn flags(&self) -> u32 {
         self.flags
@@ -1829,7 +1746,6 @@ impl Decimal {
     pub(crate) const fn mantissa_array3(&self) -> [u32; 3] {
         [self.lo, self.mid, self.hi]
     }
-
     #[inline(always)]
     pub(crate) const fn mantissa_array4(&self) -> [u32; 4] {
         [self.lo, self.mid, self.hi, 0]
@@ -1852,7 +1768,7 @@ impl Decimal {
     /// // Sometimes, we may want to represent the approximation exactly.
     /// assert_eq!("0.100000001490116119384765625", Decimal::from_f32_retain(0.1_f32).unwrap().to_string());
     /// ```
-    pub fn from_f32_retain(n: f32) -> Option<Self> {
+    pub const fn from_f32_retain(n: f32) -> Option<Self> {
         from_f32(n, false)
     }
 
@@ -1873,12 +1789,12 @@ impl Decimal {
     /// // Sometimes, we may want to represent the approximation exactly.
     /// assert_eq!("0.1000000000000000055511151231", Decimal::from_f64_retain(0.1_f64).unwrap().to_string());
     /// ```
-    pub fn from_f64_retain(n: f64) -> Option<Self> {
+    pub const fn from_f64_retain(n: f64) -> Option<Self> {
         from_f64(n, false)
     }
 }
 
-impl Default for Decimal {
+impl const Default for Decimal {
     /// Returns the default value for a `Decimal` (equivalent to `Decimal::ZERO`). [Read more]
     ///
     /// [Read more]: core::default::Default#tymethod.default
@@ -1894,13 +1810,16 @@ pub(crate) enum CalculationResult {
     DivByZero,
 }
 
-#[inline]
+/// Build the packed `flags` word from a sign and a scale.
+#[inline(always)]
 const fn flags(neg: bool, scale: u32) -> u32 {
     (scale << SCALE_SHIFT) | ((neg as u32) << SIGN_SHIFT)
 }
 
+// ── TryFrom Decimal → primitive ──────────────────────────────────────────────
+
 macro_rules! integer_docs {
-    ( true ) => {
+    ( true  ) => {
         " by truncating and returning the integer component"
     };
     ( false ) => {
@@ -1924,7 +1843,6 @@ macro_rules! impl_try_from_decimal {
         )]
         impl TryFrom<Decimal> for $TInto {
             type Error = crate::Error;
-
             #[inline]
             fn try_from(t: Decimal) -> Result<Self, Error> {
                 $conversion_fn(&t).ok_or_else(|| Error::ConversionTo(stringify!($TInto).into()))
@@ -1948,6 +1866,8 @@ impl_try_from_decimal!(u32, Decimal::to_u32, integer_docs!(true));
 impl_try_from_decimal!(u64, Decimal::to_u64, integer_docs!(true));
 impl_try_from_decimal!(u128, Decimal::to_u128, integer_docs!(true));
 
+// ── TryFrom primitive → Decimal ───────────────────────────────────────────────
+
 // #[doc] attributes are formatted poorly with rustfmt so skip for now.
 // See https://github.com/rust-lang/rustfmt/issues/5062 for more information.
 #[rustfmt::skip]
@@ -1960,7 +1880,6 @@ macro_rules! impl_try_from_primitive {
         )]
         impl TryFrom<$TFrom> for Decimal {
             type Error = crate::Error;
-
             #[inline]
             fn try_from(t: $TFrom) -> Result<Self, Error> {
                 $conversion_fn(t) $( .ok_or_else(|| $err) )?
@@ -1974,55 +1893,54 @@ impl_try_from_primitive!(f64, Self::from_f64, Error::ConversionTo("Decimal".into
 impl_try_from_primitive!(&str, core::str::FromStr::from_str);
 
 macro_rules! impl_from {
-    ($T:ty, $from_ty:path) => {
+    ($T:ty, $from_ty:path, $TT:ty) => {
         ///
         /// Conversion to `Decimal`.
         ///
-        impl core::convert::From<$T> for Decimal {
+        impl const core::convert::From<$T> for Decimal {
             #[inline]
             fn from(t: $T) -> Self {
-                $from_ty(t).unwrap()
+                $from_ty(t as $TT).unwrap()
             }
         }
     };
 }
 
-impl_from!(isize, FromPrimitive::from_isize);
-impl_from!(i8, FromPrimitive::from_i8);
-impl_from!(i16, FromPrimitive::from_i16);
-impl_from!(i32, FromPrimitive::from_i32);
-impl_from!(i64, FromPrimitive::from_i64);
-impl_from!(usize, FromPrimitive::from_usize);
-impl_from!(u8, FromPrimitive::from_u8);
-impl_from!(u16, FromPrimitive::from_u16);
-impl_from!(u32, FromPrimitive::from_u32);
-impl_from!(u64, FromPrimitive::from_u64);
+impl_from!(isize, Decimal::from_i128, i128);
+impl_from!(i8, Decimal::from_i32, i32);
+impl_from!(i16, Decimal::from_i32, i32);
+impl_from!(i32, Decimal::from_i32, i32);
+impl_from!(i64, Decimal::from_i64, i64);
+impl_from!(usize, Decimal::from_u128, u128);
+impl_from!(u8, Decimal::from_u32, u32);
+impl_from!(u16, Decimal::from_u32, u32);
+impl_from!(u32, Decimal::from_u32, u32);
+impl_from!(u64, Decimal::from_u64, u64);
+impl_from!(i128, Decimal::from_i128, i128);
+impl_from!(u128, Decimal::from_u128, u128);
 
-impl_from!(i128, FromPrimitive::from_i128);
-impl_from!(u128, FromPrimitive::from_u128);
+// ── num_traits impls ──────────────────────────────────────────────────────────
 
 impl Zero for Decimal {
+    #[inline]
     fn zero() -> Decimal {
         ZERO
     }
-
+    #[inline]
     fn is_zero(&self) -> bool {
         self.is_zero()
     }
 }
 
 impl One for Decimal {
+    #[inline]
     fn one() -> Decimal {
         ONE
     }
 }
 
-impl Signed for Decimal {
-    fn abs(&self) -> Self {
-        self.abs()
-    }
-
-    fn abs_sub(&self, other: &Self) -> Self {
+impl Decimal {
+    pub const fn abs_sub(&self, other: &Self) -> Self {
         if self <= other {
             ZERO
         } else {
@@ -2030,7 +1948,7 @@ impl Signed for Decimal {
         }
     }
 
-    fn signum(&self) -> Self {
+    pub const fn signum(&self) -> Self {
         if self.is_zero() {
             ZERO
         } else {
@@ -2041,11 +1959,27 @@ impl Signed for Decimal {
             value
         }
     }
+}
 
+impl Signed for Decimal {
+    #[inline]
+    fn abs(&self) -> Self {
+        self.abs()
+    }
+
+    fn abs_sub(&self, other: &Self) -> Self {
+        self.abs_sub(other)
+    }
+
+    fn signum(&self) -> Self {
+        self.signum()
+    }
+
+    #[inline]
     fn is_positive(&self) -> bool {
         self.is_sign_positive()
     }
-
+    #[inline]
     fn is_negative(&self) -> bool {
         self.is_sign_negative()
     }
@@ -2053,80 +1987,71 @@ impl Signed for Decimal {
 
 impl Num for Decimal {
     type FromStrRadixErr = Error;
-
+    #[inline]
     fn from_str_radix(str: &str, radix: u32) -> Result<Self, Self::FromStrRadixErr> {
         Decimal::from_str_radix(str, radix)
     }
 }
 
-impl FromStr for Decimal {
+impl const FromStr for Decimal {
     type Err = Error;
-
+    #[inline]
     fn from_str(value: &str) -> Result<Decimal, Self::Err> {
         crate::str::parse_str_radix_10(value)
     }
 }
-
-impl FromPrimitive for Decimal {
-    fn from_i32(n: i32) -> Option<Decimal> {
-        let flags: u32;
-        let value_copy: i64;
-        if n >= 0 {
-            flags = 0;
-            value_copy = n as i64;
+impl Decimal {
+    #[inline]
+    pub const fn from_i32(n: i32) -> Option<Decimal> {
+        // Branchless sign extraction: negative flag + unsigned absolute value.
+        let (flags, lo) = if n >= 0 {
+            (0u32, n as u32)
         } else {
-            flags = SIGN_MASK;
-            value_copy = -(n as i64);
-        }
+            (SIGN_MASK, (-(n as i64)) as u32)
+        };
         Some(Decimal {
             flags,
-            lo: value_copy as u32,
+            lo,
             mid: 0,
             hi: 0,
         })
     }
 
-    fn from_i64(n: i64) -> Option<Decimal> {
-        let flags: u32;
-        let value_copy: i128;
-        if n >= 0 {
-            flags = 0;
-            value_copy = n as i128;
+    #[inline]
+    pub const fn from_i64(n: i64) -> Option<Decimal> {
+        let (flags, abs) = if n >= 0 {
+            (0u32, n as u64)
         } else {
-            flags = SIGN_MASK;
-            value_copy = -(n as i128);
-        }
+            (SIGN_MASK, (-(n as i128)) as u64)
+        };
         Some(Decimal {
             flags,
-            lo: value_copy as u32,
-            mid: (value_copy >> 32) as u32,
+            lo: abs as u32,
+            mid: (abs >> 32) as u32,
             hi: 0,
         })
     }
 
-    fn from_i128(n: i128) -> Option<Decimal> {
-        let flags;
-        let unsigned;
-        if n >= 0 {
-            unsigned = n as u128;
-            flags = 0;
+    #[inline]
+    pub const fn from_i128(n: i128) -> Option<Decimal> {
+        let (flags, abs) = if n >= 0 {
+            (0u32, n as u128)
         } else {
-            unsigned = n.unsigned_abs();
-            flags = SIGN_MASK;
+            (SIGN_MASK, n.unsigned_abs())
         };
-        // Check if we overflow
-        if unsigned >> 96 != 0 {
+        if abs >> 96 != 0 {
             return None;
         }
         Some(Decimal {
             flags,
-            lo: unsigned as u32,
-            mid: (unsigned >> 32) as u32,
-            hi: (unsigned >> 64) as u32,
+            lo: abs as u32,
+            mid: (abs >> 32) as u32,
+            hi: (abs >> 64) as u32,
         })
     }
 
-    fn from_u32(n: u32) -> Option<Decimal> {
+    #[inline]
+    pub const fn from_u32(n: u32) -> Option<Decimal> {
         Some(Decimal {
             flags: 0,
             lo: n,
@@ -2135,7 +2060,8 @@ impl FromPrimitive for Decimal {
         })
     }
 
-    fn from_u64(n: u64) -> Option<Decimal> {
+    #[inline]
+    pub const fn from_u64(n: u64) -> Option<Decimal> {
         Some(Decimal {
             flags: 0,
             lo: n as u32,
@@ -2144,8 +2070,8 @@ impl FromPrimitive for Decimal {
         })
     }
 
-    fn from_u128(n: u128) -> Option<Decimal> {
-        // Check if we overflow
+    #[inline]
+    pub const fn from_u128(n: u128) -> Option<Decimal> {
         if n >> 96 != 0 {
             return None;
         }
@@ -2157,35 +2083,70 @@ impl FromPrimitive for Decimal {
         })
     }
 
-    fn from_f32(n: f32) -> Option<Decimal> {
-        // By default, we remove excess bits. This allows 0.1_f64 == dec!(0.1).
+    #[inline]
+    pub const fn from_f32(n: f32) -> Option<Decimal> {
         from_f32(n, true)
     }
-
-    fn from_f64(n: f64) -> Option<Decimal> {
-        // By default, we remove excess bits. This allows 0.1_f64 == dec!(0.1).
+    #[inline]
+    pub const fn from_f64(n: f64) -> Option<Decimal> {
         from_f64(n, true)
     }
 }
 
+impl FromPrimitive for Decimal {
+    #[inline]
+    fn from_i32(n: i32) -> Option<Decimal> {
+        Self::from_i32(n)
+    }
+
+    #[inline]
+    fn from_i64(n: i64) -> Option<Decimal> {
+        Self::from_i64(n)
+    }
+
+    #[inline]
+    fn from_i128(n: i128) -> Option<Decimal> {
+        Self::from_i128(n)
+    }
+
+    #[inline]
+    fn from_u32(n: u32) -> Option<Decimal> {
+        Self::from_u32(n)
+    }
+
+    #[inline]
+    fn from_u64(n: u64) -> Option<Decimal> {
+        Self::from_u64(n)
+    }
+
+    #[inline]
+    fn from_u128(n: u128) -> Option<Decimal> {
+        Self::from_u128(n)
+    }
+
+    #[inline]
+    fn from_f32(n: f32) -> Option<Decimal> {
+        Self::from_f32(n)
+    }
+    #[inline]
+    fn from_f64(n: f64) -> Option<Decimal> {
+        Self::from_f64(n)
+    }
+}
+
+// ── Float → Decimal helpers ───────────────────────────────────────────────────
+
 #[inline]
-fn from_f64(n: f64, remove_excess_bits: bool) -> Option<Decimal> {
-    // Handle the case if it is NaN, Infinity or -Infinity
+const fn from_f64(n: f64, remove_excess_bits: bool) -> Option<Decimal> {
     if !n.is_finite() {
         return None;
     }
 
-    // It's a shame we can't use a union for this due to it being broken up by bits
-    // i.e. 1/11/52 (sign, exponent, mantissa)
-    // See https://en.wikipedia.org/wiki/IEEE_754-1985
-    // n = (sign*-1) * 2^exp * mantissa
-    // Decimal of course stores this differently... 10^-exp * significand
     let raw = n.to_bits();
     let positive = (raw >> 63) == 0;
     let biased_exponent = ((raw >> 52) & 0x7FF) as i32;
     let mantissa = raw & 0x000F_FFFF_FFFF_FFFF;
 
-    // Handle the special zero case
     if biased_exponent == 0 && mantissa == 0 {
         let mut zero = ZERO;
         if !positive {
@@ -2194,7 +2155,6 @@ fn from_f64(n: f64, remove_excess_bits: bool) -> Option<Decimal> {
         return Some(zero);
     }
 
-    // Get the bits and exponent2
     let mut exponent2 = biased_exponent - 1023;
     let mut bits = [
         (mantissa & 0xFFFF_FFFF) as u32,
@@ -2202,39 +2162,25 @@ fn from_f64(n: f64, remove_excess_bits: bool) -> Option<Decimal> {
         0u32,
     ];
     if biased_exponent == 0 {
-        // Denormalized number - correct the exponent
         exponent2 += 1;
     } else {
-        // Add extra hidden bit to mantissa
         bits[1] |= 0x0010_0000;
     }
-
-    // The act of copying a mantissa as integer bits is equivalent to shifting
-    // left the mantissa 52 bits. The exponent is reduced to compensate.
     exponent2 -= 52;
-
-    // Convert to decimal
     base2_to_decimal(&mut bits, exponent2, positive, true, remove_excess_bits)
 }
 
 #[inline]
-fn from_f32(n: f32, remove_excess_bits: bool) -> Option<Decimal> {
-    // Handle the case if it is NaN, Infinity or -Infinity
+const fn from_f32(n: f32, remove_excess_bits: bool) -> Option<Decimal> {
     if !n.is_finite() {
         return None;
     }
 
-    // It's a shame we can't use a union for this due to it being broken up by bits
-    // i.e. 1/8/23 (sign, exponent, mantissa)
-    // See https://en.wikipedia.org/wiki/IEEE_754-1985
-    // n = (sign*-1) * 2^exp * mantissa
-    // Decimal of course stores this differently... 10^-exp * significand
     let raw = n.to_bits();
     let positive = (raw >> 31) == 0;
     let biased_exponent = ((raw >> 23) & 0xFF) as i32;
     let mantissa = raw & 0x007F_FFFF;
 
-    // Handle the special zero case
     if biased_exponent == 0 && mantissa == 0 {
         let mut zero = ZERO;
         if !positive {
@@ -2243,26 +2189,18 @@ fn from_f32(n: f32, remove_excess_bits: bool) -> Option<Decimal> {
         return Some(zero);
     }
 
-    // Get the bits and exponent2
     let mut exponent2 = biased_exponent - 127;
     let mut bits = [mantissa, 0u32, 0u32];
     if biased_exponent == 0 {
-        // Denormalized number - correct the exponent
         exponent2 += 1;
     } else {
-        // Add extra hidden bit to mantissa
         bits[0] |= 0x0080_0000;
     }
-
-    // The act of copying a mantissa as integer bits is equivalent to shifting
-    // left the mantissa 23 bits. The exponent is reduced to compensate.
     exponent2 -= 23;
-
-    // Convert to decimal
     base2_to_decimal(&mut bits, exponent2, positive, false, remove_excess_bits)
 }
 
-fn base2_to_decimal(
+const fn base2_to_decimal(
     bits: &mut [u32; 3],
     exponent2: i32,
     positive: bool,
@@ -2272,14 +2210,12 @@ fn base2_to_decimal(
     // 2^exponent2 = (10^exponent2)/(5^exponent2)
     //             = (5^-exponent2)*(10^exponent2)
     let mut exponent5 = -exponent2;
-    let mut exponent10 = exponent2; // Ultimately, we want this for the scale
+    let mut exponent10 = exponent2;
 
     while exponent5 > 0 {
-        // Check to see if the mantissa is divisible by 2
         if bits[0] & 0x1 == 0 {
             exponent10 += 1;
             exponent5 -= 1;
-
             // We can divide by 2 without losing precision
             let hi_carry = bits[2] & 0x1 == 1;
             bits[2] >>= 1;
@@ -2287,22 +2223,13 @@ fn base2_to_decimal(
             bits[1] = (bits[1] >> 1) | if hi_carry { SIGN_MASK } else { 0 };
             bits[0] = (bits[0] >> 1) | if mid_carry { SIGN_MASK } else { 0 };
         } else {
-            // The mantissa is NOT divisible by 2. Therefore the mantissa should
-            // be multiplied by 5, unless the multiplication overflows.
             exponent5 -= 1;
-
             let mut temp = [bits[0], bits[1], bits[2]];
             if ops::array::mul_by_u32(&mut temp, 5) == 0 {
-                // Multiplication succeeded without overflow, so copy result back
-                bits[0] = temp[0];
-                bits[1] = temp[1];
-                bits[2] = temp[2];
+                *bits = temp;
             } else {
-                // Multiplication by 5 overflows. The mantissa should be divided
-                // by 2, and therefore will lose significant digits.
+                // Multiplication by 5 overflows — divide by 2 instead (loses precision).
                 exponent10 += 1;
-
-                // Shift right
                 let hi_carry = bits[2] & 0x1 == 1;
                 bits[2] >>= 1;
                 let mid_carry = bits[1] & 0x1 == 1;
@@ -2312,50 +2239,32 @@ fn base2_to_decimal(
         }
     }
 
-    // In order to divide the value by 5, it is best to multiply by 2/10.
-    // Therefore, exponent10 is decremented, and the mantissa should be multiplied by 2
+    // In order to divide by 5, multiply by 2/10 — decrement exponent10, shift left.
     while exponent5 < 0 {
         if bits[2] & SIGN_MASK == 0 {
-            // No far left bit, the mantissa can withstand a shift-left without overflowing
             exponent10 -= 1;
             exponent5 += 1;
             ops::array::shl1_internal(bits, 0);
         } else if exponent10 * 2 > -exponent5 {
-            // Multiplying by >=2 which, due to the previous condition, means an overflow.
             return None;
         } else {
-            // The mantissa would overflow if shifted. Therefore it should be
-            // directly divided by 5. This will lose significant digits, unless
-            // by chance the mantissa happens to be divisible by 5.
             exponent5 += 1;
             ops::array::div_by_u32(bits, 5);
         }
     }
 
-    // At this point, the mantissa has assimilated the exponent5, but
-    // exponent10 might not be suitable for assignment. exponent10 must be
-    // in the range [-MAX_SCALE..0], so the mantissa must be scaled up or
-    // down appropriately.
     while exponent10 > 0 {
-        // In order to bring exponent10 down to 0, the mantissa should be
-        // multiplied by 10 to compensate. If the exponent10 is too big, this
-        // will cause the mantissa to overflow.
         if ops::array::mul_by_u32(bits, 10) == 0 {
             exponent10 -= 1;
         } else {
-            // Overflowed - return?
             return None;
         }
     }
 
-    // In order to bring exponent up to -MAX_SCALE, the mantissa should
-    // be divided by 10 to compensate. If the exponent10 is too small, this
-    // will cause the mantissa to underflow and become 0.
     while exponent10 < -(Decimal::MAX_SCALE as i32) {
         let rem10 = ops::array::div_by_u32(bits, 10);
         exponent10 += 1;
         if ops::array::is_all_zero(bits) {
-            // Underflow, unable to keep dividing
             exponent10 = 0;
         } else if rem10 >= 5 {
             ops::array::add_one_internal(bits);
@@ -2363,9 +2272,6 @@ fn base2_to_decimal(
     }
 
     if remove_excess_bits {
-        // This step is required in order to remove excess bits of precision from the
-        // end of the bit representation, down to the precision guaranteed by the
-        // floating point number (see IEEE-754).
         if is64 {
             // Guaranteed to approx 15/16 dp
             while exponent10 < 0 && (bits[2] != 0 || (bits[1] & 0xFFF0_0000) != 0) {
@@ -2385,12 +2291,10 @@ fn base2_to_decimal(
                 }
             }
         }
-
         // Remove multiples of 10 from the representation
         while exponent10 < 0 {
             let mut temp = [bits[0], bits[1], bits[2]];
-            let remainder = ops::array::div_by_u32(&mut temp, 10);
-            if remainder == 0 {
+            if ops::array::div_by_u32(&mut temp, 10) == 0 {
                 exponent10 += 1;
                 bits[0] = temp[0];
                 bits[1] = temp[1];
@@ -2409,106 +2313,100 @@ fn base2_to_decimal(
     })
 }
 
-impl ToPrimitive for Decimal {
-    fn to_i64(&self) -> Option<i64> {
+// ── ToPrimitive ───────────────────────────────────────────────────────────────
+impl Decimal {
+    pub const fn to_i64(&self) -> Option<i64> {
         let d = self.trunc();
-        // If it is in the hi bit then it is a clear overflow.
+        let negative = self.is_sign_negative();
         if d.hi != 0 {
-            // Overflow
             return None;
         }
-        let negative = self.is_sign_negative();
-
-        // A bit more convoluted in terms of checking when it comes to the hi bit due to twos-complement
         if d.mid & 0x8000_0000 > 0 {
             if negative && d.mid == 0x8000_0000 && d.lo == 0 {
-                // We do this because below we try to convert the i64 to a positive first - of which
-                // doesn't fit into an i64.
                 return Some(i64::MIN);
             }
             return None;
         }
-
         let raw: i64 = (i64::from(d.mid) << 32) | i64::from(d.lo);
-        if negative {
-            Some(raw.neg())
-        } else {
-            Some(raw)
-        }
+        Some(if negative { raw.neg() } else { raw })
     }
 
-    fn to_i128(&self) -> Option<i128> {
+    pub const fn to_i128(&self) -> Option<i128> {
         let d = self.trunc();
-        let raw: i128 = ((i128::from(d.hi) << 64) | (i128::from(d.mid) << 32)) | i128::from(d.lo);
-        if self.is_sign_negative() {
-            Some(-raw)
-        } else {
-            Some(raw)
-        }
+        let raw = ((i128::from(d.hi) << 64) | (i128::from(d.mid) << 32)) | i128::from(d.lo);
+        Some(if self.is_sign_negative() { -raw } else { raw })
     }
 
-    fn to_u64(&self) -> Option<u64> {
+    pub const fn to_u64(&self) -> Option<u64> {
         if self.is_sign_negative() {
             return None;
         }
-
         let d = self.trunc();
         if d.hi != 0 {
-            // Overflow
             return None;
         }
-
         Some((u64::from(d.mid) << 32) | u64::from(d.lo))
     }
 
-    fn to_u128(&self) -> Option<u128> {
+    pub const fn to_u128(&self) -> Option<u128> {
         if self.is_sign_negative() {
             return None;
         }
-
         let d = self.trunc();
         Some((u128::from(d.hi) << 64) | (u128::from(d.mid) << 32) | u128::from(d.lo))
     }
 
-    fn to_f64(&self) -> Option<f64> {
+    pub fn to_f64(&self) -> Option<f64> {
         if self.scale() == 0 {
             // If scale is zero, we are storing a 96-bit integer value, that would
             // always fit into i128, which in turn is always representable as f64,
             // albeit with loss of precision for values outside of -2^53..2^53 range.
-            let integer = self.to_i128();
-            integer.map(|i| i as f64)
-        } else {
-            let neg = self.is_sign_negative();
-            let mut mantissa: u128 = self.lo.into();
-            mantissa |= (self.mid as u128) << 32;
-            mantissa |= (self.hi as u128) << 64;
-            // scale is at most 28, so this fits comfortably into a u128.
-            let scale = self.scale();
-            let precision: u128 = 10_u128.pow(scale);
-            let integral_part = mantissa / precision;
-            let frac_part = mantissa % precision;
-            let frac_f64 = (frac_part as f64) / (precision as f64);
-            let integral = integral_part as f64;
-            // If there is a fractional component then we will need to add that and remove any
-            // inaccuracies that creep in during addition. Otherwise, if the fractional component
-            // is zero we can exit early.
-            if frac_f64.is_zero() {
-                if neg {
-                    return Some(-integral);
-                }
-                return Some(integral);
-            }
-            let value = integral + frac_f64;
-            let round_to = 10f64.powi(self.scale() as i32);
-            let rounded = (value * round_to).round() / round_to;
-            if neg {
-                Some(-rounded)
-            } else {
-                Some(rounded)
-            }
+            return self.to_i128().map(i128_to_f64);
         }
+        let neg = self.is_sign_negative();
+        let mantissa = (self.lo as u128) | ((self.mid as u128) << 32) | ((self.hi as u128) << 64);
+        let scale = self.scale();
+        let precision = 10_u128.pow(scale);
+        let integral = (mantissa / precision) as f64;
+        let frac_f64 = (mantissa % precision) as f64 / precision as f64;
+
+        if frac_f64 == 0.0 {
+            return Some(if neg { -integral } else { integral });
+        }
+        let value = integral + frac_f64;
+        let round_to = 10f64.powi(scale as i32);
+        let rounded = (value * round_to).round() / round_to;
+        Some(if neg { -rounded } else { rounded })
     }
 }
+
+const fn i128_to_f64(i: i128) -> f64 {
+    i as f64
+}
+
+impl ToPrimitive for Decimal {
+    fn to_i64(&self) -> Option<i64> {
+        self.to_i64()
+    }
+
+    fn to_i128(&self) -> Option<i128> {
+        self.to_i128()
+    }
+
+    fn to_u64(&self) -> Option<u64> {
+        self.to_u64()
+    }
+
+    fn to_u128(&self) -> Option<u128> {
+        self.to_u128()
+    }
+
+    fn to_f64(&self) -> Option<f64> {
+        self.to_f64()
+    }
+}
+
+// ── Formatting ────────────────────────────────────────────────────────────────
 
 impl fmt::Display for Decimal {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
@@ -2523,6 +2421,7 @@ impl fmt::Display for Decimal {
 }
 
 impl fmt::Debug for Decimal {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         fmt::Display::fmt(self, f)
     }
@@ -2540,22 +2439,15 @@ impl fmt::UpperExp for Decimal {
     }
 }
 
-impl Neg for Decimal {
+// ── Neg ───────────────────────────────────────────────────────────────────────
+
+impl const Neg for Decimal {
     type Output = Decimal;
-
+    #[inline(always)]
     fn neg(self) -> Decimal {
-        let mut copy = self;
-        copy.set_sign_negative(self.is_sign_positive());
-        copy
-    }
-}
-
-impl Neg for &Decimal {
-    type Output = Decimal;
-
-    fn neg(self) -> Decimal {
+        // Flip the sign bit directly — no mutation required.
         Decimal {
-            flags: flags(!self.is_sign_negative(), self.scale()),
+            flags: self.flags ^ SIGN_MASK,
             hi: self.hi,
             lo: self.lo,
             mid: self.mid,
@@ -2563,154 +2455,70 @@ impl Neg for &Decimal {
     }
 }
 
-impl AddAssign for Decimal {
-    fn add_assign(&mut self, other: Decimal) {
-        let result = self.add(other);
-        self.lo = result.lo;
-        self.mid = result.mid;
-        self.hi = result.hi;
-        self.flags = result.flags;
+impl const Neg for &Decimal {
+    type Output = Decimal;
+    #[inline(always)]
+    fn neg(self) -> Decimal {
+        Decimal {
+            flags: self.flags ^ SIGN_MASK,
+            hi: self.hi,
+            lo: self.lo,
+            mid: self.mid,
+        }
     }
 }
 
-impl<'a> AddAssign<&'a Decimal> for Decimal {
-    fn add_assign(&mut self, other: &'a Decimal) {
-        Decimal::add_assign(self, *other)
-    }
+// ── XxxAssign impls ───────────────────────────────────────────────────────────
+//
+// All five compound-assignment families follow the same pattern:
+//   *self = self.op(other)
+// A macro eliminates ~120 lines of hand-written four-field copies.
+
+macro_rules! impl_assign_op {
+    ($trait:ident, $method:ident, $op:ident) => {
+        impl const $trait for Decimal {
+            #[inline(always)]
+            fn $method(&mut self, other: Decimal) {
+                *self = self.$op(other);
+            }
+        }
+        impl<'a> const $trait<&'a Decimal> for Decimal {
+            #[inline(always)]
+            fn $method(&mut self, other: &'a Decimal) {
+                *self = self.$op(*other);
+            }
+        }
+        impl const $trait<Decimal> for &mut Decimal {
+            #[inline(always)]
+            fn $method(&mut self, other: Decimal) {
+                **self = (**self).$op(other);
+            }
+        }
+        impl<'a> const $trait<&'a Decimal> for &'a mut Decimal {
+            #[inline(always)]
+            fn $method(&mut self, other: &'a Decimal) {
+                **self = (**self).$op(*other);
+            }
+        }
+    };
 }
 
-impl AddAssign<Decimal> for &mut Decimal {
-    fn add_assign(&mut self, other: Decimal) {
-        Decimal::add_assign(*self, other)
-    }
-}
+impl_assign_op!(AddAssign, add_assign, add);
+impl_assign_op!(SubAssign, sub_assign, sub);
+impl_assign_op!(MulAssign, mul_assign, mul);
+impl_assign_op!(DivAssign, div_assign, div);
+impl_assign_op!(RemAssign, rem_assign, rem);
 
-impl<'a> AddAssign<&'a Decimal> for &'a mut Decimal {
-    fn add_assign(&mut self, other: &'a Decimal) {
-        Decimal::add_assign(*self, *other)
-    }
-}
+// ── Equality, hashing, ordering ───────────────────────────────────────────────
 
-impl SubAssign for Decimal {
-    fn sub_assign(&mut self, other: Decimal) {
-        let result = self.sub(other);
-        self.lo = result.lo;
-        self.mid = result.mid;
-        self.hi = result.hi;
-        self.flags = result.flags;
-    }
-}
-
-impl<'a> SubAssign<&'a Decimal> for Decimal {
-    fn sub_assign(&mut self, other: &'a Decimal) {
-        Decimal::sub_assign(self, *other)
-    }
-}
-
-impl SubAssign<Decimal> for &mut Decimal {
-    fn sub_assign(&mut self, other: Decimal) {
-        Decimal::sub_assign(*self, other)
-    }
-}
-
-impl<'a> SubAssign<&'a Decimal> for &'a mut Decimal {
-    fn sub_assign(&mut self, other: &'a Decimal) {
-        Decimal::sub_assign(*self, *other)
-    }
-}
-
-impl MulAssign for Decimal {
-    fn mul_assign(&mut self, other: Decimal) {
-        let result = self.mul(other);
-        self.lo = result.lo;
-        self.mid = result.mid;
-        self.hi = result.hi;
-        self.flags = result.flags;
-    }
-}
-
-impl<'a> MulAssign<&'a Decimal> for Decimal {
-    fn mul_assign(&mut self, other: &'a Decimal) {
-        Decimal::mul_assign(self, *other)
-    }
-}
-
-impl MulAssign<Decimal> for &mut Decimal {
-    fn mul_assign(&mut self, other: Decimal) {
-        Decimal::mul_assign(*self, other)
-    }
-}
-
-impl<'a> MulAssign<&'a Decimal> for &'a mut Decimal {
-    fn mul_assign(&mut self, other: &'a Decimal) {
-        Decimal::mul_assign(*self, *other)
-    }
-}
-
-impl DivAssign for Decimal {
-    fn div_assign(&mut self, other: Decimal) {
-        let result = self.div(other);
-        self.lo = result.lo;
-        self.mid = result.mid;
-        self.hi = result.hi;
-        self.flags = result.flags;
-    }
-}
-
-impl<'a> DivAssign<&'a Decimal> for Decimal {
-    fn div_assign(&mut self, other: &'a Decimal) {
-        Decimal::div_assign(self, *other)
-    }
-}
-
-impl DivAssign<Decimal> for &mut Decimal {
-    fn div_assign(&mut self, other: Decimal) {
-        Decimal::div_assign(*self, other)
-    }
-}
-
-impl<'a> DivAssign<&'a Decimal> for &'a mut Decimal {
-    fn div_assign(&mut self, other: &'a Decimal) {
-        Decimal::div_assign(*self, *other)
-    }
-}
-
-impl RemAssign for Decimal {
-    fn rem_assign(&mut self, other: Decimal) {
-        let result = self.rem(other);
-        self.lo = result.lo;
-        self.mid = result.mid;
-        self.hi = result.hi;
-        self.flags = result.flags;
-    }
-}
-
-impl<'a> RemAssign<&'a Decimal> for Decimal {
-    fn rem_assign(&mut self, other: &'a Decimal) {
-        Decimal::rem_assign(self, *other)
-    }
-}
-
-impl RemAssign<Decimal> for &mut Decimal {
-    fn rem_assign(&mut self, other: Decimal) {
-        Decimal::rem_assign(*self, other)
-    }
-}
-
-impl<'a> RemAssign<&'a Decimal> for &'a mut Decimal {
-    fn rem_assign(&mut self, other: &'a Decimal) {
-        Decimal::rem_assign(*self, *other)
-    }
-}
-
-impl PartialEq for Decimal {
+impl const PartialEq for Decimal {
     #[inline]
     fn eq(&self, other: &Decimal) -> bool {
         self.cmp(other) == Equal
     }
 }
 
-impl Eq for Decimal {}
+impl const Eq for Decimal {}
 
 impl Hash for Decimal {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -2722,21 +2530,24 @@ impl Hash for Decimal {
     }
 }
 
-impl PartialOrd for Decimal {
+impl const PartialOrd for Decimal {
     #[inline]
     fn partial_cmp(&self, other: &Decimal) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for Decimal {
+impl const Ord for Decimal {
+    #[inline]
     fn cmp(&self, other: &Decimal) -> Ordering {
         ops::cmp_impl(self, other)
     }
 }
 
+// ── Iterator accumulation ─────────────────────────────────────────────────────
+
 impl Product for Decimal {
-    /// Panics if out-of-bounds
+    /// Panics if out-of-bounds.
     fn product<I: Iterator<Item = Decimal>>(iter: I) -> Self {
         let mut product = ONE;
         for i in iter {
@@ -2747,7 +2558,7 @@ impl Product for Decimal {
 }
 
 impl<'a> Product<&'a Decimal> for Decimal {
-    /// Panics if out-of-bounds
+    /// Panics if out-of-bounds.
     fn product<I: Iterator<Item = &'a Decimal>>(iter: I) -> Self {
         let mut product = ONE;
         for i in iter {

@@ -1,5 +1,6 @@
 use crate::Decimal;
 use alloc::string::String;
+use core::any::Any;
 use core::fmt;
 
 /// Error type for the library.
@@ -8,8 +9,9 @@ pub enum Error {
     /// A generic error from Rust Decimal with the `String` containing more information as to what
     /// went wrong.
     ///
-    /// This is a legacy/deprecated error type retained for backwards compatibility.  
+    /// This is a legacy/deprecated error type retained for backwards compatibility.
     ErrorString(String),
+    ErrorStringStatic(&'static str),
     /// The value provided exceeds `Decimal::MAX`.
     ExceedsMaximumPossibleValue,
     /// The value provided is less than `Decimal::MIN`.
@@ -25,17 +27,25 @@ pub enum Error {
 
 impl<S> From<S> for Error
 where
-    S: Into<String>,
+    S: Into<String> + 'static,
 {
     #[inline]
     fn from(from: S) -> Self {
-        Self::ErrorString(from.into())
+        // Temporarily borrow `from` as a dynamic Any type
+        let any_ref = &from as &dyn Any;
+
+        // Try to safely downcast the reference to &'static str
+        if let Some(&static_str) = any_ref.downcast_ref::<&'static str>() {
+            Self::ErrorStringStatic(static_str)
+        } else {
+            Self::ErrorString(from.into())
+        }
     }
 }
 
 #[cold]
-pub(crate) fn tail_error(from: &'static str) -> Result<Decimal, Error> {
-    Err(from.into())
+pub(crate) const fn tail_error(from: &'static str) -> Result<Decimal, Error> {
+    Err(Error::ErrorStringStatic(from))
 }
 
 #[cfg(feature = "std")]
@@ -45,6 +55,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Self::ErrorString(ref err) => f.pad(err),
+            Self::ErrorStringStatic(ref err) => f.pad(err),
             Self::ExceedsMaximumPossibleValue => {
                 write!(f, "Number exceeds maximum value that can be represented.")
             }

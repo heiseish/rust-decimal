@@ -5,7 +5,7 @@ use crate::{decimal::CalculationResult, ops, Decimal};
 use core::ops::{Add, Div, Mul, Rem, Sub};
 use num_traits::{CheckedAdd, CheckedDiv, CheckedMul, CheckedRem, CheckedSub, Inv};
 
-// Macros and `Decimal` implementations
+// ── Macros ────────────────────────────────────────────────────────────────────
 
 #[rustfmt::skip]
 macro_rules! impl_checked {
@@ -19,7 +19,7 @@ macro_rules! impl_checked {
         )]
         #[inline(always)]
         #[must_use]
-        pub fn $fun(self, other: Decimal) -> Option<Decimal> {
+        pub const fn $fun(self, other: Decimal) -> Option<Decimal> {
             match ops::$impl(&self, &other) {
                 CalculationResult::Ok(result) => Some(result),
                 _ => None,
@@ -40,11 +40,10 @@ macro_rules! impl_saturating {
         )]
         #[inline(always)]
         #[must_use]
-        pub fn $fun(self, other: Decimal) -> Decimal {
-            if let Some(elem) = self.$impl(other) {
-                elem
-            } else {
-                $cmp(&self, &other)
+        pub const fn $fun(self, other: Decimal) -> Decimal {
+            match self.$impl(other) {
+                Some(elem) => elem,
+                None       => $cmp(&self, &other),
             }
         }
     };
@@ -56,7 +55,6 @@ macro_rules! impl_checked_and_saturating {
         $op_short:literal,
         $checked_fun:ident,
         $checked_impl:ident,
-
         $saturating_fun:ident,
         $saturating_cmp:ident
     ) => {
@@ -70,6 +68,8 @@ macro_rules! impl_checked_and_saturating {
         );
     };
 }
+
+// ── `Decimal` inherent methods ────────────────────────────────────────────────
 
 impl Decimal {
     impl_checked_and_saturating!(
@@ -101,7 +101,10 @@ impl Decimal {
     impl_checked!("remainder", "%", checked_rem, rem_impl);
 }
 
-// Macros and trait implementations
+// ── Operator forwarding macros ────────────────────────────────────────────────
+//
+// Each binary operator needs three impls: val×val, ref×val, val×ref.
+// The canonical impl is always ref×ref; the rest forward into it.
 
 macro_rules! forward_all_binop {
     (impl $imp:ident for $res:ty, $method:ident) => {
@@ -113,10 +116,9 @@ macro_rules! forward_all_binop {
 
 macro_rules! forward_ref_val_binop {
     (impl $imp:ident for $res:ty, $method:ident) => {
-        impl<'a> $imp<$res> for &'a $res {
+        impl<'a> const $imp<$res> for &'a $res {
             type Output = $res;
-
-            #[inline]
+            #[inline(always)]
             fn $method(self, other: $res) -> $res {
                 self.$method(&other)
             }
@@ -126,10 +128,9 @@ macro_rules! forward_ref_val_binop {
 
 macro_rules! forward_val_ref_binop {
     (impl $imp:ident for $res:ty, $method:ident) => {
-        impl<'a> $imp<&'a $res> for $res {
+        impl<'a> const $imp<&'a $res> for $res {
             type Output = $res;
-
-            #[inline]
+            #[inline(always)]
             fn $method(self, other: &$res) -> $res {
                 (&self).$method(other)
             }
@@ -139,10 +140,9 @@ macro_rules! forward_val_ref_binop {
 
 macro_rules! forward_val_val_binop {
     (impl $imp:ident for $res:ty, $method:ident) => {
-        impl $imp<$res> for $res {
+        impl const $imp<$res> for $res {
             type Output = $res;
-
-            #[inline]
+            #[inline(always)]
             fn $method(self, other: $res) -> $res {
                 (&self).$method(&other)
             }
@@ -150,10 +150,11 @@ macro_rules! forward_val_val_binop {
     };
 }
 
-forward_all_binop!(impl Add for Decimal, add);
-impl Add<&Decimal> for &Decimal {
-    type Output = Decimal;
+// ── Arithmetic operator impls ─────────────────────────────────────────────────
 
+forward_all_binop!(impl Add for Decimal, add);
+impl const Add<&Decimal> for &Decimal {
+    type Output = Decimal;
     #[inline(always)]
     fn add(self, other: &Decimal) -> Decimal {
         match ops::add_impl(self, other) {
@@ -163,55 +164,34 @@ impl Add<&Decimal> for &Decimal {
     }
 }
 
-impl CheckedAdd for Decimal {
-    #[inline]
-    fn checked_add(&self, v: &Decimal) -> Option<Decimal> {
-        Decimal::checked_add(*self, *v)
+forward_all_binop!(impl Sub for Decimal, sub);
+impl const Sub<&Decimal> for &Decimal {
+    type Output = Decimal;
+    #[inline(always)]
+    fn sub(self, other: &Decimal) -> Decimal {
+        match ops::sub_impl(self, other) {
+            CalculationResult::Ok(diff) => diff,
+            _ => panic!("Subtraction overflowed"),
+        }
     }
 }
 
-impl CheckedSub for Decimal {
-    #[inline]
-    fn checked_sub(&self, v: &Decimal) -> Option<Decimal> {
-        Decimal::checked_sub(*self, *v)
-    }
-}
-
-impl CheckedMul for Decimal {
-    #[inline]
-    fn checked_mul(&self, v: &Decimal) -> Option<Decimal> {
-        Decimal::checked_mul(*self, *v)
-    }
-}
-
-impl CheckedDiv for Decimal {
-    #[inline]
-    fn checked_div(&self, v: &Decimal) -> Option<Decimal> {
-        Decimal::checked_div(*self, *v)
-    }
-}
-
-impl CheckedRem for Decimal {
-    #[inline]
-    fn checked_rem(&self, v: &Decimal) -> Option<Decimal> {
-        Decimal::checked_rem(*self, *v)
-    }
-}
-
-impl Inv for Decimal {
-    type Output = Self;
-
-    #[inline]
-    fn inv(self) -> Self {
-        Decimal::ONE / self
+forward_all_binop!(impl Mul for Decimal, mul);
+impl const Mul<&Decimal> for &Decimal {
+    type Output = Decimal;
+    #[inline(always)]
+    fn mul(self, other: &Decimal) -> Decimal {
+        match ops::mul_impl(self, other) {
+            CalculationResult::Ok(prod) => prod,
+            _ => panic!("Multiplication overflowed"),
+        }
     }
 }
 
 forward_all_binop!(impl Div for Decimal, div);
-impl Div<&Decimal> for &Decimal {
+impl const Div<&Decimal> for &Decimal {
     type Output = Decimal;
-
-    #[inline]
+    #[inline(always)]
     fn div(self, other: &Decimal) -> Decimal {
         match ops::div_impl(self, other) {
             CalculationResult::Ok(quot) => quot,
@@ -221,24 +201,10 @@ impl Div<&Decimal> for &Decimal {
     }
 }
 
-forward_all_binop!(impl Mul for Decimal, mul);
-impl Mul<&Decimal> for &Decimal {
-    type Output = Decimal;
-
-    #[inline]
-    fn mul(self, other: &Decimal) -> Decimal {
-        match ops::mul_impl(self, other) {
-            CalculationResult::Ok(prod) => prod,
-            _ => panic!("Multiplication overflowed"),
-        }
-    }
-}
-
 forward_all_binop!(impl Rem for Decimal, rem);
-impl Rem<&Decimal> for &Decimal {
+impl const Rem<&Decimal> for &Decimal {
     type Output = Decimal;
-
-    #[inline]
+    #[inline(always)]
     fn rem(self, other: &Decimal) -> Decimal {
         match ops::rem_impl(self, other) {
             CalculationResult::Ok(rem) => rem,
@@ -248,20 +214,57 @@ impl Rem<&Decimal> for &Decimal {
     }
 }
 
-forward_all_binop!(impl Sub for Decimal, sub);
-impl Sub<&Decimal> for &Decimal {
-    type Output = Decimal;
+// ── `num_traits` checked-op impls ─────────────────────────────────────────────
+//
+// These delegate to the `const` inherent methods above, keeping the hot path
+// monomorphic and inlineable.
 
+impl CheckedAdd for Decimal {
     #[inline(always)]
-    fn sub(self, other: &Decimal) -> Decimal {
-        match ops::sub_impl(self, other) {
-            CalculationResult::Ok(sum) => sum,
-            _ => panic!("Subtraction overflowed"),
-        }
+    fn checked_add(&self, v: &Decimal) -> Option<Decimal> {
+        Decimal::checked_add(*self, *v)
     }
 }
 
-// This function signature is expected by `impl_saturating`, thus the reason of `_b`.
+impl CheckedSub for Decimal {
+    #[inline(always)]
+    fn checked_sub(&self, v: &Decimal) -> Option<Decimal> {
+        Decimal::checked_sub(*self, *v)
+    }
+}
+
+impl CheckedMul for Decimal {
+    #[inline(always)]
+    fn checked_mul(&self, v: &Decimal) -> Option<Decimal> {
+        Decimal::checked_mul(*self, *v)
+    }
+}
+
+impl CheckedDiv for Decimal {
+    #[inline(always)]
+    fn checked_div(&self, v: &Decimal) -> Option<Decimal> {
+        Decimal::checked_div(*self, *v)
+    }
+}
+
+impl CheckedRem for Decimal {
+    #[inline(always)]
+    fn checked_rem(&self, v: &Decimal) -> Option<Decimal> {
+        Decimal::checked_rem(*self, *v)
+    }
+}
+
+impl Inv for Decimal {
+    type Output = Self;
+    #[inline(always)]
+    fn inv(self) -> Self {
+        Decimal::ONE / self
+    }
+}
+
+// ── Saturating helpers ────────────────────────────────────────────────────────
+
+/// Used by saturating add/sub: if `a` is positive the result saturates at MAX, else MIN.
 #[inline(always)]
 const fn if_a_is_positive_then_max(a: &Decimal, _b: &Decimal) -> Decimal {
     if a.is_sign_positive() {
@@ -271,19 +274,18 @@ const fn if_a_is_positive_then_max(a: &Decimal, _b: &Decimal) -> Decimal {
     }
 }
 
-// Used by saturating multiplications.
-//
-// If the `a` and `b` combination represents a XNOR bit operation, returns MAX. Otherwise,
-// returns MIN.
+/// Used by saturating mul: result is MAX when both signs match (XNOR), MIN otherwise.
 #[inline(always)]
 const fn if_xnor_then_max(a: &Decimal, b: &Decimal) -> Decimal {
-    match (a.is_sign_positive(), b.is_sign_positive()) {
-        (true, true) => Decimal::MAX,
-        (true, false) => Decimal::MIN,
-        (false, true) => Decimal::MIN,
-        (false, false) => Decimal::MAX,
+    // Positive×Positive or Negative×Negative → MAX; mixed → MIN.
+    if a.is_sign_positive() == b.is_sign_positive() {
+        Decimal::MAX
+    } else {
+        Decimal::MIN
     }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

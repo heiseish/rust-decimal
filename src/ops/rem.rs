@@ -2,7 +2,7 @@ use crate::constants::{MAX_I32_SCALE, MAX_SCALE_I32, POWERS_10};
 use crate::decimal::{CalculationResult, Decimal};
 use crate::ops::common::{Buf12, Buf16, Buf24, Dec64};
 
-pub(crate) fn rem_impl(d1: &Decimal, d2: &Decimal) -> CalculationResult {
+pub(crate) const fn rem_impl(d1: &Decimal, d2: &Decimal) -> CalculationResult {
     if d2.is_zero() {
         return CalculationResult::DivByZero;
     }
@@ -10,9 +10,6 @@ pub(crate) fn rem_impl(d1: &Decimal, d2: &Decimal) -> CalculationResult {
         return CalculationResult::Ok(Decimal::ZERO);
     }
 
-    // We handle the structs a bit different here. Firstly, we ignore both the sign/scale of d2.
-    // This is because during a remainder operation we do not care about the sign of the divisor
-    // and only concern ourselves with that of the dividend.
     let mut d1 = Dec64::new(d1);
     let d2_scale = d2.scale();
     let mut d2 = Buf12::from_decimal(d2);
@@ -27,21 +24,15 @@ pub(crate) fn rem_impl(d1: &Decimal, d2: &Decimal) -> CalculationResult {
         },
     );
     match cmp {
-        core::cmp::Ordering::Equal => {
-            // Same numbers meaning that remainder is zero
-            return CalculationResult::Ok(Decimal::ZERO);
-        }
-        core::cmp::Ordering::Less => {
-            // d1 < d2, e.g. 1/2. This means that the result is the value of d1
-            return CalculationResult::Ok(d1.to_decimal());
-        }
+        core::cmp::Ordering::Equal => return CalculationResult::Ok(Decimal::ZERO),
+        core::cmp::Ordering::Less => return CalculationResult::Ok(d1.to_decimal()),
         core::cmp::Ordering::Greater => {}
     }
 
-    // At this point we know that the dividend > divisor and that they are both non-zero.
     let mut scale = d1.scale as i32 - d2_scale as i32;
+
     if scale > 0 {
-        // Scale up the divisor
+        // Scale the divisor up to match the dividend.
         loop {
             let power = if scale >= MAX_I32_SCALE {
                 POWERS_10[9]
@@ -56,7 +47,6 @@ pub(crate) fn rem_impl(d1: &Decimal, d2: &Decimal) -> CalculationResult {
             d2.set_mid(tmp as u32);
             d2.set_hi((tmp >> 32) as u32);
 
-            // Keep scaling if there is more to go
             scale -= MAX_I32_SCALE;
             if scale <= 0 {
                 break;
@@ -66,22 +56,20 @@ pub(crate) fn rem_impl(d1: &Decimal, d2: &Decimal) -> CalculationResult {
     }
 
     loop {
-        // If the dividend is smaller than the divisor then try to scale that up first
         if scale < 0 {
             let mut quotient = Buf12 {
                 data: [d1.lo(), d1.mid(), d1.hi],
             };
             loop {
-                // Figure out how much we can scale by
-                let power_scale;
-                if let Some(u) = quotient.find_scale(MAX_SCALE_I32 + scale) {
-                    if u >= POWERS_10.len() {
-                        power_scale = 9;
-                    } else {
-                        power_scale = u;
+                let power_scale = match quotient.find_scale(MAX_SCALE_I32 + scale) {
+                    Some(u) => {
+                        if u > 9 {
+                            9
+                        } else {
+                            u
+                        }
                     }
-                } else {
-                    return CalculationResult::Overflow;
+                    None => return CalculationResult::Overflow,
                 };
                 if power_scale == 0 {
                     break;
@@ -93,10 +81,8 @@ pub(crate) fn rem_impl(d1: &Decimal, d2: &Decimal) -> CalculationResult {
                 quotient.data[0] = tmp as u32;
                 tmp >>= 32;
                 quotient.set_high64(tmp.wrapping_add(quotient.high64().wrapping_mul(power)));
-                if power_scale != 9 {
-                    break;
-                }
-                if scale >= 0 {
+
+                if power_scale != 9 || scale >= 0 {
                     break;
                 }
             }
@@ -105,17 +91,17 @@ pub(crate) fn rem_impl(d1: &Decimal, d2: &Decimal) -> CalculationResult {
             d1.scale = d2_scale;
         }
 
-        // if the high portion is empty then return the modulus of the bottom portion
         if d1.hi == 0 {
             d1.low64 %= d2.low64();
             return CalculationResult::Ok(d1.to_decimal());
-        } else if (d2.mid() | d2.hi()) == 0 {
-            let mut tmp = d1.high64();
-            tmp = ((tmp % d2.lo() as u64) << 32) | (d1.lo() as u64);
-            d1.low64 = tmp % d2.lo() as u64;
+        }
+
+        if (d2.mid() | d2.hi()) == 0 {
+            let d2_lo = d2.lo() as u64;
+            let tmp = (d1.high64() % d2_lo) << 32 | d1.lo() as u64;
+            d1.low64 = tmp % d2_lo;
             d1.hi = 0;
         } else {
-            // Divisor is > 32 bits
             return rem_full(&d1, &d2, scale);
         }
 
@@ -127,10 +113,9 @@ pub(crate) fn rem_impl(d1: &Decimal, d2: &Decimal) -> CalculationResult {
     CalculationResult::Ok(d1.to_decimal())
 }
 
-fn rem_full(d1: &Dec64, d2: &Buf12, scale: i32) -> CalculationResult {
+const fn rem_full(d1: &Dec64, d2: &Buf12, scale: i32) -> CalculationResult {
     let mut scale = scale;
 
-    // First normalize the divisor
     let shift = if d2.hi() == 0 {
         d2.mid().leading_zeros()
     } else {
@@ -140,8 +125,8 @@ fn rem_full(d1: &Dec64, d2: &Buf12, scale: i32) -> CalculationResult {
     let mut buffer = Buf24::zero();
     let mut overflow = 0u32;
     buffer.set_low64(d1.low64 << shift);
-    buffer.set_mid64(((d1.mid() as u64).wrapping_add((d1.hi as u64) << 32)) >> (32 - shift));
-    let mut upper = 3; // We start at 3 due to bit shifting
+    buffer.set_mid64((d1.mid() as u64 + ((d1.hi as u64) << 32)) >> (32 - shift));
+    let mut upper = 3usize;
 
     while scale < 0 {
         let power = if -scale >= MAX_I32_SCALE {
@@ -149,25 +134,27 @@ fn rem_full(d1: &Dec64, d2: &Buf12, scale: i32) -> CalculationResult {
         } else {
             POWERS_10[-scale as usize]
         } as u64;
+
+        // Multiply buffer[0..=upper] by power — index loop (no iterators in const).
         let mut tmp64 = buffer.data[0] as u64 * power;
         buffer.data[0] = tmp64 as u32;
 
-        for (index, part) in buffer.data.iter_mut().enumerate().skip(1) {
-            if index > upper {
-                break;
-            }
+        // buffer.data has indices 0..=5; upper==6 means the 7th word lives in
+        // `overflow`, which is handled by the block below. Cap at 5 to avoid OOB.
+        let mut i = 1usize;
+        while i <= upper && i < 6 {
             tmp64 >>= 32;
-            tmp64 = tmp64.wrapping_add((*part as u64).wrapping_mul(power));
-            *part = tmp64 as u32;
+            tmp64 = tmp64.wrapping_add(buffer.data[i] as u64 * power);
+            buffer.data[i] = tmp64 as u32;
+            i += 1;
         }
-        // If we have overflow then also process that
+
         if upper == 6 {
             tmp64 >>= 32;
-            tmp64 = tmp64.wrapping_add((overflow as u64).wrapping_mul(power));
+            tmp64 = tmp64.wrapping_add(overflow as u64 * power);
             overflow = tmp64 as u32;
         }
 
-        // Make sure the high bit is not set
         if tmp64 > 0x7FFF_FFFF {
             upper += 1;
             if upper > 5 {
@@ -179,44 +166,42 @@ fn rem_full(d1: &Dec64, d2: &Buf12, scale: i32) -> CalculationResult {
         scale += MAX_I32_SCALE;
     }
 
-    // TODO: Optimize slice logic
-
     let mut tmp = Buf16::zero();
-    let divisor = d2.low64() << shift;
+    let divisor_shifted = d2.low64() << shift;
+
     if d2.hi() == 0 {
-        // Do some division
+        // ── 64-bit divisor path ───────────────────────────────────────────────
         if upper == 6 {
             upper -= 1;
-
             tmp.data = [buffer.data[4], buffer.data[5], overflow, 0];
-            tmp.partial_divide_64(divisor);
+            tmp.partial_divide_64(divisor_shifted);
             buffer.data[4] = tmp.data[0];
             buffer.data[5] = tmp.data[1];
         }
         if upper == 5 {
             upper -= 1;
             tmp.data = [buffer.data[3], buffer.data[4], buffer.data[5], 0];
-            tmp.partial_divide_64(divisor);
+            tmp.partial_divide_64(divisor_shifted);
             buffer.data[3] = tmp.data[0];
             buffer.data[4] = tmp.data[1];
             buffer.data[5] = tmp.data[2];
         }
         if upper == 4 {
             tmp.data = [buffer.data[2], buffer.data[3], buffer.data[4], 0];
-            tmp.partial_divide_64(divisor);
+            tmp.partial_divide_64(divisor_shifted);
             buffer.data[2] = tmp.data[0];
             buffer.data[3] = tmp.data[1];
             buffer.data[4] = tmp.data[2];
         }
 
         tmp.data = [buffer.data[1], buffer.data[2], buffer.data[3], 0];
-        tmp.partial_divide_64(divisor);
+        tmp.partial_divide_64(divisor_shifted);
         buffer.data[1] = tmp.data[0];
         buffer.data[2] = tmp.data[1];
         buffer.data[3] = tmp.data[2];
 
         tmp.data = [buffer.data[0], buffer.data[1], buffer.data[2], 0];
-        tmp.partial_divide_64(divisor);
+        tmp.partial_divide_64(divisor_shifted);
         buffer.data[0] = tmp.data[0];
         buffer.data[1] = tmp.data[1];
         buffer.data[2] = tmp.data[2];
@@ -230,16 +215,15 @@ fn rem_full(d1: &Dec64, d2: &Buf12, scale: i32) -> CalculationResult {
             d1.scale,
         ))
     } else {
-        let divisor_low64 = divisor;
+        // ── 96-bit divisor path ───────────────────────────────────────────────
         let divisor = Buf12 {
             data: [
-                divisor_low64 as u32,
-                (divisor_low64 >> 32) as u32,
-                (((d2.mid() as u64) + ((d2.hi() as u64) << 32)) >> (32 - shift)) as u32,
+                divisor_shifted as u32,
+                (divisor_shifted >> 32) as u32,
+                ((d2.mid() as u64 + ((d2.hi() as u64) << 32)) >> (32 - shift)) as u32,
             ],
         };
 
-        // Do some division
         if upper == 6 {
             upper -= 1;
             tmp.data = [buffer.data[3], buffer.data[4], buffer.data[5], overflow];
@@ -273,7 +257,7 @@ fn rem_full(d1: &Dec64, d2: &Buf12, scale: i32) -> CalculationResult {
         buffer.data[2] = tmp.data[2];
         buffer.data[3] = tmp.data[3];
 
-        let low64 = (buffer.low64() >> shift) + ((buffer.data[2] as u64) << (32 - shift) << 32);
+        let low64 = (buffer.low64() >> shift) | ((buffer.data[2] as u64) << (32 - shift) << 32);
         CalculationResult::Ok(Decimal::from_parts(
             low64 as u32,
             (low64 >> 32) as u32,

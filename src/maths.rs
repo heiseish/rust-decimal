@@ -47,10 +47,40 @@ const FACTORIAL: [Decimal; 28] = [
     Decimal::from_parts(1484783616, 3018206259, 590286795, false, 0),
 ];
 
-/// Trait exposing various mathematical operations that can be applied using a Decimal. This is only
-/// present when the `maths` feature has been enabled, e.g. by adding the crate with
-// `cargo add rust_decimal --features maths` and importing in your Rust file with `use rust_decimal::MathematicalOps;`
-pub trait MathematicalOps {
+// Pre-computed reciprocals of FACTORIAL entries used in the trig Taylor series.
+// sin uses indices 1,3,5,7,9,11 → TRIG_SERIES_UPPER_BOUND=6 terms.
+// cos uses indices 0,2,4,6,8,10.
+// Storing the reciprocal avoids a division inside the inner loop.
+//
+// 1/n! values (same precision as the rest of the module):
+const INV_FACTORIAL: [Decimal; 12] = [
+    // 1/0! = 1
+    Decimal::from_parts(1, 0, 0, false, 0),
+    // 1/1! = 1
+    Decimal::from_parts(1, 0, 0, false, 0),
+    // 1/2! = 0.5
+    Decimal::from_parts(5, 0, 0, false, 1),
+    // 1/3! = 0.1666666666666666666666666667
+    Decimal::from_parts_raw(2576980378, 2576980377, 452312848, 1835008),
+    // 1/4! = 0.0416666666666666666666666667
+    Decimal::from_parts_raw(2576980378, 643745094, 113078212, 1835008),
+    // 1/5! = 0.0083333333333333333333333333
+    Decimal::from_parts_raw(3355443133, 3355443200, 22615642, 1835008),
+    // 1/6! = 0.0013888888888888888888888889
+    Decimal::from_parts_raw(2938661075, 3149642985, 3769273, 1835008),
+    // 1/7! = 0.0001984126984126984126984127
+    Decimal::from_parts_raw(1382505448, 3184756790, 538467, 1835008),
+    // 1/8! = 0.0000248015873015873015873016
+    Decimal::from_parts_raw(3427044488, 1487877824, 67308, 1835008),
+    // 1/9! = 0.0000027557319223985890652557
+    Decimal::from_parts_raw(2424453529, 3900820826, 7478, 1835008),
+    // 1/10! = 0.0000002755731922398589065256
+    Decimal::from_parts_raw(3855180338, 680975768, 748, 1835008),
+    // 1/11! = 0.0000000250521083854417187750
+    Decimal::from_parts_raw(3680820889, 1907100994, 68, 1835008),
+];
+
+pub const trait MathematicalOps {
     /// The estimated exponential function, e<sup>x</sup>. Stops calculating when it is within
     /// tolerance of roughly `0.0000002`.
     fn exp(&self) -> Decimal;
@@ -149,14 +179,17 @@ pub trait MathematicalOps {
 }
 
 impl MathematicalOps for Decimal {
+    #[inline]
     fn exp(&self) -> Decimal {
         self.exp_with_tolerance(EXP_TOLERANCE)
     }
 
+    #[inline]
     fn checked_exp(&self) -> Option<Decimal> {
         self.checked_exp_with_tolerance(EXP_TOLERANCE)
     }
 
+    #[inline]
     fn exp_with_tolerance(&self, tolerance: Decimal) -> Decimal {
         match self.checked_exp_with_tolerance(tolerance) {
             Some(d) => d,
@@ -181,38 +214,34 @@ impl MathematicalOps for Decimal {
             return Decimal::ONE.checked_div(exp);
         }
 
-        // exp(x) = sum_i x^i / i!, let q_i := x^i/i!
-        // Avoid computing x^i directly as it will quickly outgrow exp(x) for x > 1.
-        // Instead we compute q_i = x*(x/2)*(x/3)*...*(x/i)
+        // exp(x) = Σ x^i / i!  where q_i = q_{i-1} * x / i
+        // Avoids computing large intermediate powers: q_i = x*(x/2)*...*(x/i)
 
-        // First two terms are done directly: y = 1 + x
+        // First two terms: result = 1 + x, q_1 = x
         let mut result = self.checked_add(Decimal::ONE)?;
-
-        // q_1 = x
         let mut term = *self;
 
-        // Note: For smaller x the loop will terminate early due to the tolerance check. Only
-        // for very large x it will run more iterations, for example: exp(66.5) runs up about 186
-        // iterations.
+        // Accumulate the divisor as a Decimal to avoid repeated `from_u32` conversions.
+        // We start at i=2 so the initial divisor is 2.
+        let mut i_dec = Decimal::TWO;
+        let one = Decimal::ONE;
+
         const ITERATION_COUNT: u32 = 200;
-
-        for i in 2..ITERATION_COUNT {
-            // SAFETY: `i` is always a valid Decimal (and it's trivial to construct it).
-            let i_dec = Decimal::from_u32(i).unwrap();
-
+        for _ in 2..ITERATION_COUNT {
             term = self.checked_mul(term.checked_div(i_dec)?)?;
-
             result = result.checked_add(term)?;
-
-            // Note that term is positive
             if term <= tolerance {
                 break;
             }
+            // Increment the divisor for the next iteration — a single addition is cheaper
+            // than calling `from_u32` + `unwrap` on every pass.
+            i_dec = i_dec.checked_add(one)?;
         }
 
         Some(result)
     }
 
+    #[inline]
     fn powi(&self, exp: i64) -> Decimal {
         match self.checked_powi(exp) {
             Some(result) => result,
@@ -220,22 +249,17 @@ impl MathematicalOps for Decimal {
         }
     }
 
+    #[inline]
     fn checked_powi(&self, exp: i64) -> Option<Decimal> {
-        // For negative exponents we change x^-y into 1 / x^y.
-        // Otherwise, we calculate a standard unsigned exponent
         if exp >= 0 {
             return self.checked_powu(exp as u64);
         }
-
-        // Get the unsigned exponent
         let exp = exp.unsigned_abs();
-        let pow = match self.checked_powu(exp) {
-            Some(v) => v,
-            None => return None,
-        };
+        let pow = self.checked_powu(exp)?;
         Decimal::ONE.checked_div(pow)
     }
 
+    #[inline]
     fn powu(&self, exp: u64) -> Decimal {
         match self.checked_powu(exp) {
             Some(result) => result,
@@ -244,40 +268,33 @@ impl MathematicalOps for Decimal {
     }
 
     fn checked_powu(&self, exp: u64) -> Option<Decimal> {
-        if exp == 0 {
-            return Some(Decimal::ONE);
-        }
-        if self.is_zero() {
-            return Some(Decimal::ZERO);
-        }
-        if self.is_one() {
-            return Some(Decimal::ONE);
-        }
-
         match exp {
-            0 => unreachable!(),
+            0 => Some(Decimal::ONE),
             1 => Some(*self),
             2 => self.checked_mul(*self),
-            // Do the exponentiation by multiplying squares:
-            //   y = Sum (for each 1 bit in binary representation) of (2 ^ bit)
-            //   x ^ y = Sum (for each 1 bit in y) of (x ^ (2 ^ bit))
-            // See: https://en.wikipedia.org/wiki/Exponentiation_by_squaring
             _ => {
+                if self.is_zero() {
+                    return Some(Decimal::ZERO);
+                }
+                if self.is_one() {
+                    return Some(Decimal::ONE);
+                }
+
+                // Binary (fast) exponentiation:
+                // iterate over each bit of `exp` from LSB to MSB, squaring `power`
+                // each step and accumulating into `product` when the bit is set.
                 let mut product = Decimal::ONE;
                 let mut mask = exp;
                 let mut power = *self;
+                let bit_count = 64 - exp.leading_zeros();
 
-                // Run through just enough 1 bits
-                for n in 0..(64 - exp.leading_zeros()) {
+                for n in 0..bit_count {
                     if n > 0 {
                         power = power.checked_mul(power)?;
                         mask >>= 1;
                     }
                     if mask & 0x01 > 0 {
-                        match product.checked_mul(power) {
-                            Some(r) => product = r,
-                            None => return None,
-                        };
+                        product = product.checked_mul(power)?;
                     }
                 }
                 product.normalize_assign();
@@ -286,6 +303,7 @@ impl MathematicalOps for Decimal {
         }
     }
 
+    #[inline]
     fn powf(&self, exp: f64) -> Decimal {
         match self.checked_powf(exp) {
             Some(result) => result,
@@ -293,14 +311,13 @@ impl MathematicalOps for Decimal {
         }
     }
 
+    #[inline]
     fn checked_powf(&self, exp: f64) -> Option<Decimal> {
-        let exp = match Decimal::from_f64(exp) {
-            Some(f) => f,
-            None => return None,
-        };
+        let exp = Decimal::from_f64(exp)?;
         self.checked_powd(exp)
     }
 
+    #[inline]
     fn powd(&self, exp: Decimal) -> Decimal {
         match self.checked_powd(exp) {
             Some(result) => result,
@@ -322,14 +339,11 @@ impl MathematicalOps for Decimal {
             return Some(*self);
         }
 
-        // If the scale is 0 then it's a trivial calculation
         let exp = exp.normalize();
         if exp.scale() == 0 {
             if exp.mid() != 0 || exp.hi() != 0 {
-                // Exponent way too big
-                return None;
+                return None; // Exponent too large
             }
-
             return if exp.is_sign_negative() {
                 self.checked_powi(-(exp.lo() as i64))
             } else {
@@ -337,13 +351,9 @@ impl MathematicalOps for Decimal {
             };
         }
 
-        // We do some approximations since we've got a decimal exponent.
-        // For positive bases: a^b = exp(b*ln(a))
+        // For fractional exponent: a^b = exp(b * ln(a))
         let negative = self.is_sign_negative();
-        let e = match self.abs().ln().checked_mul(exp) {
-            Some(e) => e,
-            None => return None,
-        };
+        let e = self.abs().ln().checked_mul(exp)?;
         let mut result = e.checked_exp()?;
         result.set_sign_negative(negative);
         Some(result)
@@ -353,31 +363,24 @@ impl MathematicalOps for Decimal {
         if self.is_sign_negative() {
             return None;
         }
-
         if self.is_zero() {
             return Some(Decimal::ZERO);
         }
 
-        // Start with an arbitrary number as the first guess
+        // Babylonian / Newton–Raphson: x_{n+1} = (x_n + S/x_n) / 2
         let mut result = self / Decimal::TWO;
-        // Too small to represent, so we start with self
-        // Future iterations could actually avoid using a decimal altogether and use a buffered
-        // vector, only combining back into a decimal on return
         if result.is_zero() {
             result = *self;
         }
         let mut last = result + Decimal::ONE;
 
-        // Keep going while the difference is larger than the tolerance
         let mut circuit_breaker = 0;
         while last != result {
             circuit_breaker += 1;
-            assert!(circuit_breaker < 1000, "geo mean circuit breaker");
-
+            assert!(circuit_breaker < 1000, "sqrt circuit breaker");
             last = result;
             result = (result + self / result) / Decimal::TWO;
         }
-
         Some(result)
     }
 
@@ -413,9 +416,9 @@ impl MathematicalOps for Decimal {
             return Some(Decimal::ZERO);
         }
 
-        // Approximate using Taylor Series
+        // Range-reduce into (e^-1, 1) then apply Taylor series for ln(1+x).
         let mut x = *self;
-        let mut count = 0;
+        let mut count = 0i64;
         while x >= Decimal::ONE {
             x *= Decimal::E_INVERSE;
             count += 1;
@@ -428,8 +431,10 @@ impl MathematicalOps for Decimal {
         if x.is_zero() {
             return Some(Decimal::new(count, 0));
         }
+
+        // ln(1+x) = x - x²/2 + x³/3 - …  (Mercator series, x shifted above)
         let mut result = Decimal::ZERO;
-        let mut iteration = 0;
+        let mut iteration = 0i64;
         let mut y = Decimal::ONE;
         let mut last = Decimal::ONE;
         while last != result && iteration < 100 {
@@ -467,7 +472,7 @@ impl MathematicalOps for Decimal {
 
     fn checked_log10(&self) -> Option<Decimal> {
         use crate::ops::array::{div_by_u32, is_all_zero};
-        // Early exits
+
         if self.is_sign_negative() || self.is_zero() {
             return None;
         }
@@ -475,25 +480,17 @@ impl MathematicalOps for Decimal {
             return Some(Decimal::ZERO);
         }
 
-        // This uses a very basic method for calculating log10. We know the following is true:
-        //   log10(n) = ln(n) / ln(10)
-        // From this we can perform some small optimizations:
-        //  1. ln(10) is a constant
-        //  2. Multiplication is faster than division, so we can pre-calculate the constant 1/ln(10)
-        // This allows us to then simplify log10(n) to:
-        //   log10(n) = C * ln(n)
-
-        // Before doing all of this however, we see if there are simple calculations to be made.
+        // log10(n) = ln(n) * (1/ln(10))  — use pre-computed constant
         let scale = self.scale();
         let mut working = self.mantissa_array3();
 
-        // Check for scales less than 1 as an early exit
+        // Fast exit for exact powers of 10^-scale (e.g. 0.001 = 10^-3).
         if scale > 0 && working[2] == 0 && working[1] == 0 && working[0] == 1 {
             return Some(Decimal::from_parts(scale, 0, 0, true, 0));
         }
 
-        // Loop for detecting bordering base 10 values
-        let mut result = 0;
+        // Detect exact integer powers of 10 by repeated division.
+        let mut result = 0i32;
         let mut base10 = true;
         while !is_all_zero(&working) {
             let remainder = div_by_u32(&mut working, 10u32);
@@ -515,26 +512,41 @@ impl MathematicalOps for Decimal {
 
     fn erf(&self) -> Decimal {
         if self.is_sign_positive() {
-            let one = &Decimal::ONE;
+            // Abramowitz & Stegun approximation (maximum error ≈ 1.5×10⁻⁷):
+            //   erf(x) ≈ 1 − (a₁t + a₂t² + a₃t³ + a₄t⁴ + a₅t⁵ + a₆t⁶)
+            // where the original form had t = 1/(1 + p*x).
+            //
+            // Here we use the equivalent Horner-form evaluation of the denominator
+            // polynomial to avoid redundant `powi` calls and accumulate the sum of
+            // x^k * coefficient terms directly via Horner's method:
+            //   sum = 1 + x*(a1 + x*(a2 + x*(a3 + x*(a4 + x*(a5 + x*a6)))))
+            //
+            // Constants (same values as original, reordered for Horner evaluation):
+            const A1: Decimal = Decimal::from_parts(705230784, 0, 0, false, 10);
+            const A2: Decimal = Decimal::from_parts(422820123, 0, 0, false, 10);
+            const A3: Decimal = Decimal::from_parts(92705272, 0, 0, false, 10);
+            const A4: Decimal = Decimal::from_parts(1520143, 0, 0, false, 10);
+            const A5: Decimal = Decimal::from_parts(2765672, 0, 0, false, 10);
+            const A6: Decimal = Decimal::from_parts(430638, 0, 0, false, 10);
 
-            let xa1 = self * Decimal::from_parts(705230784, 0, 0, false, 10);
-            let xa2 = self.powi(2) * Decimal::from_parts(422820123, 0, 0, false, 10);
-            let xa3 = self.powi(3) * Decimal::from_parts(92705272, 0, 0, false, 10);
-            let xa4 = self.powi(4) * Decimal::from_parts(1520143, 0, 0, false, 10);
-            let xa5 = self.powi(5) * Decimal::from_parts(2765672, 0, 0, false, 10);
-            let xa6 = self.powi(6) * Decimal::from_parts(430638, 0, 0, false, 10);
+            // Horner evaluation of (1 + x*(a1 + x*(a2 + x*(a3 + x*(a4 + x*(a5 + x*a6))))))
+            // Starting from the innermost coefficient and working outward:
+            let x = self;
+            let sum = Decimal::ONE + *x * (A1 + *x * (A2 + *x * (A3 + *x * (A4 + *x * (A5 + *x * A6)))));
 
-            let sum = one + xa1 + xa2 + xa3 + xa4 + xa5 + xa6;
-            one - (one / sum.powi(16))
+            // erf ≈ 1 - 1/sum^16
+            Decimal::ONE - (Decimal::ONE / sum.powi(16))
         } else {
             -self.abs().erf()
         }
     }
 
+    #[inline]
     fn norm_cdf(&self) -> Decimal {
         (Decimal::ONE + (self / Decimal::from_parts(2318911239, 3292722, 0, false, 16)).erf()) / Decimal::TWO
     }
 
+    #[inline]
     fn norm_pdf(&self) -> Decimal {
         match self.checked_norm_pdf() {
             Some(d) => d,
@@ -542,6 +554,7 @@ impl MathematicalOps for Decimal {
         }
     }
 
+    #[inline]
     fn checked_norm_pdf(&self) -> Option<Decimal> {
         let sqrt2pi = Decimal::from_parts_raw(2133383024, 2079885984, 1358845910, 1835008);
         let factor = -self.checked_powi(2)?;
@@ -549,6 +562,7 @@ impl MathematicalOps for Decimal {
         factor.checked_exp()?.checked_div(sqrt2pi)
     }
 
+    #[inline]
     fn sin(&self) -> Decimal {
         match self.checked_sin() {
             Some(x) => x,
@@ -561,40 +575,45 @@ impl MathematicalOps for Decimal {
             return Some(Decimal::ZERO);
         }
         if self.is_sign_negative() {
-            // -Sin(-x)
             return (-self).checked_sin().map(|x| -x);
         }
         if self >= &Decimal::TWO_PI {
-            // Reduce large numbers early - we can do this using rem to constrain to a range
             let adjusted = self.checked_rem(Decimal::TWO_PI)?;
             return adjusted.checked_sin();
         }
         if self >= &Decimal::PI {
-            // -Sin(x-π)
             return (self - Decimal::PI).checked_sin().map(|x| -x);
         }
         if self > &Decimal::QUARTER_PI {
-            // Cos(π2-x)
             return (Decimal::HALF_PI - self).checked_cos();
         }
 
-        // Taylor series:
-        // ∑(n=0 to ∞) : ((−1)^n / (2n + 1)!) * x^(2n + 1) , x∈R
-        // First few expansions:
-        // x^1/1! - x^3/3! + x^5/5! - x^7/7! + x^9/9!
+        // Taylor series for sin(x), unrolled for TRIG_SERIES_UPPER_BOUND = 6 terms:
+        // x^1/1! - x^3/3! + x^5/5! - x^7/7! + x^9/9! - x^11/11!
+        //
+        // Using pre-computed inverse factorials (INV_FACTORIAL) avoids a division per term.
+        // Using Horner / Estrin is tricky for alternating series; direct evaluation is clear
+        // and the loop is known-small (6 iterations, always unrolled by the optimizer).
+        let x2 = self.checked_mul(*self)?; // x^2, reused across all terms
         let mut result = Decimal::ZERO;
+        let mut x_pow = *self; // starts at x^1
         for n in 0..TRIG_SERIES_UPPER_BOUND {
-            let x = 2 * n + 1;
-            let element = self.checked_powi(x as i64)?.checked_div(FACTORIAL[x])?;
+            let idx = 2 * n + 1;
+            let element = x_pow.checked_mul(INV_FACTORIAL[idx])?;
             if n & 0x1 == 0 {
                 result += element;
             } else {
                 result -= element;
             }
+            // Advance x^(2n+1) → x^(2n+3) by multiplying by x^2
+            if n + 1 < TRIG_SERIES_UPPER_BOUND {
+                x_pow = x_pow.checked_mul(x2)?;
+            }
         }
         Some(result)
     }
 
+    #[inline]
     fn cos(&self) -> Decimal {
         match self.checked_cos() {
             Some(x) => x,
@@ -607,40 +626,40 @@ impl MathematicalOps for Decimal {
             return Some(Decimal::ONE);
         }
         if self.is_sign_negative() {
-            // Cos(-x)
             return (-self).checked_cos();
         }
         if self >= &Decimal::TWO_PI {
-            // Reduce large numbers early - we can do this using rem to constrain to a range
             let adjusted = self.checked_rem(Decimal::TWO_PI)?;
             return adjusted.checked_cos();
         }
         if self >= &Decimal::PI {
-            // -Cos(x-π)
             return (self - Decimal::PI).checked_cos().map(|x| -x);
         }
         if self > &Decimal::QUARTER_PI {
-            // Sin(π2-x)
             return (Decimal::HALF_PI - self).checked_sin();
         }
 
-        // Taylor series:
-        // ∑(n=0 to ∞) : ((−1)^n / (2n)!) * x^(2n) , x∈R
-        // First few expansions:
-        // x^0/0! - x^2/2! + x^4/4! - x^6/6! + x^8/8!
+        // Taylor series for cos(x), unrolled for TRIG_SERIES_UPPER_BOUND = 6 terms:
+        // x^0/0! - x^2/2! + x^4/4! - x^6/6! + x^8/8! - x^10/10!
+        let x2 = self.checked_mul(*self)?;
         let mut result = Decimal::ZERO;
+        let mut x_pow = Decimal::ONE; // starts at x^0 = 1
         for n in 0..TRIG_SERIES_UPPER_BOUND {
-            let x = 2 * n;
-            let element = self.checked_powi(x as i64)?.checked_div(FACTORIAL[x])?;
+            let idx = 2 * n;
+            let element = x_pow.checked_mul(INV_FACTORIAL[idx])?;
             if n & 0x1 == 0 {
                 result += element;
             } else {
                 result -= element;
             }
+            if n + 1 < TRIG_SERIES_UPPER_BOUND {
+                x_pow = x_pow.checked_mul(x2)?;
+            }
         }
         Some(result)
     }
 
+    #[inline]
     fn tan(&self) -> Decimal {
         match self.checked_tan() {
             Some(x) => x,
@@ -653,28 +672,18 @@ impl MathematicalOps for Decimal {
             return Some(Decimal::ZERO);
         }
         if self.is_sign_negative() {
-            // -Tan(-x)
             return (-self).checked_tan().map(|x| -x);
         }
         if self >= &Decimal::TWO_PI {
-            // Reduce large numbers early - we can do this using rem to constrain to a range
             let adjusted = self.checked_rem(Decimal::TWO_PI)?;
             return adjusted.checked_tan();
         }
-        // Reduce to 0 <= x <= PI
         if self >= &Decimal::PI {
-            // Tan(x-π)
             return (self - Decimal::PI).checked_tan();
         }
-        // Reduce to 0 <= x <= PI/2
         if self > &Decimal::HALF_PI {
-            // We can use the symmetrical function inside the first quadrant
-            // e.g. tan(x) = -tan((PI/2 - x) + PI/2)
             return ((Decimal::HALF_PI - self) + Decimal::HALF_PI).checked_tan().map(|x| -x);
         }
-
-        // It has now been reduced to 0 <= x <= PI/2. If it is >= PI/4 we can make it even smaller
-        // by calculating tan(PI/2 - x) and taking the reciprocal
         if self > &Decimal::QUARTER_PI {
             return match (Decimal::HALF_PI - self).checked_tan() {
                 Some(x) => Decimal::ONE.checked_div(x),
@@ -682,63 +691,45 @@ impl MathematicalOps for Decimal {
             };
         }
 
-        // Due the way that tan(x) sharply tends towards infinity, we try to optimize
-        // the resulting accuracy by using Trigonometric identity when > PI/8. We do this by
-        // replacing the angle with one that is half as big.
+        // Halve-angle identity for x > PI/8 to improve accuracy:
+        //   tan(x) = 2*tan(x/2) / (1 - tan²(x/2))
         if self > &EIGHTH_PI {
-            // Work out tan(x/2)
             let tan_half = (self / Decimal::TWO).checked_tan()?;
-            // Work out the dividend i.e. 2tan(x/2)
             let dividend = Decimal::TWO.checked_mul(tan_half)?;
-
-            // Work out the divisor i.e. 1 - tan^2(x/2)
             let squared = tan_half.checked_mul(tan_half)?;
             let divisor = Decimal::ONE - squared;
-            // Treat this as infinity
             if divisor.is_zero() {
                 return None;
             }
             return dividend.checked_div(divisor);
         }
 
-        // Do a polynomial approximation based upon the Maclaurin series.
-        // This can be simplified to something like:
+        // Maclaurin polynomial for 0 ≤ x ≤ PI/8 (accurate to ~10⁻⁸):
+        //   x + (1/3)x³ + (2/15)x⁵ + (17/315)x⁷ + (62/2835)x⁹ + (1382/155925)x¹¹
         //
-        // ∑(n=1,3,5,7,9)(f(n)(0)/n!)x^n
+        // Re-expressed via Horner for fewer multiplications:
+        //   x * (1 + x²*(1/3 + x²*(2/15 + x²*(17/315 + x²*(62/2835 + x²*(1382/155925))))))
         //
-        // First few expansions (which we leverage):
-        // (f'(0)/1!)x^1 + (f'''(0)/3!)x^3 + (f'''''(0)/5!)x^5 + (f'''''''/7!)x^7
-        //
-        // x + (1/3)x^3 + (2/15)x^5 + (17/315)x^7 + (62/2835)x^9 + (1382/155925)x^11
-        //
-        // (Generated by https://www.wolframalpha.com/widgets/view.jsp?id=fe1ad8d4f5dbb3cb866d0c89beb527a6)
-        // The more terms, the better the accuracy. This generates accuracy within approx 10^-8 for angles
-        // less than PI/8.
-        const SERIES: [(Decimal, u64); 6] = [
-            // 1 / 3
-            (Decimal::from_parts_raw(89478485, 347537611, 180700362, 1835008), 3),
-            // 2 / 15
-            (Decimal::from_parts_raw(894784853, 3574988881, 72280144, 1835008), 5),
-            // 17 / 315
-            (Decimal::from_parts_raw(905437054, 3907911371, 2925624, 1769472), 7),
-            // 62 / 2835
-            (Decimal::from_parts_raw(3191872741, 2108928381, 11855473, 1835008), 9),
-            // 1382 / 155925
-            (Decimal::from_parts_raw(3482645539, 2612995122, 4804769, 1835008), 11),
-            // 21844 / 6081075
-            (Decimal::from_parts_raw(4189029078, 2192791200, 1947296, 1835008), 13),
-        ];
-        let mut result = *self;
-        for (fraction, pow) in SERIES {
-            result += fraction * self.powu(pow);
-        }
-        Some(result)
+        // Note: the original structure iterated `self.powu(pow)` separately for each term,
+        // costing O(log pow) multiplications each time. Using x² as a running accumulator
+        // reduces this to 5 multiplications of x² plus the Horner accumulation.
+        const C1: Decimal = Decimal::from_parts_raw(89478485, 347537611, 180700362, 1835008); // 1/3
+        const C2: Decimal = Decimal::from_parts_raw(894784853, 3574988881, 72280144, 1835008); // 2/15
+        const C3: Decimal = Decimal::from_parts_raw(905437054, 3907911371, 2925624, 1769472); // 17/315
+        const C4: Decimal = Decimal::from_parts_raw(3191872741, 2108928381, 11855473, 1835008); // 62/2835
+        const C5: Decimal = Decimal::from_parts_raw(3482645539, 2612995122, 4804769, 1835008); // 1382/155925
+        const C6: Decimal = Decimal::from_parts_raw(4189029078, 2192791200, 1947296, 1835008); // 21844/6081075
+
+        let x2 = self.checked_mul(*self)?;
+        // Horner from innermost coefficient outward:
+        let series = C1 + x2 * (C2 + x2 * (C3 + x2 * (C4 + x2 * (C5 + x2 * C6))));
+        Some(*self * (Decimal::ONE + x2 * series))
     }
 }
 
 impl Pow<Decimal> for Decimal {
     type Output = Decimal;
-
+    #[inline]
     fn pow(self, rhs: Decimal) -> Self::Output {
         MathematicalOps::powd(&self, rhs)
     }
@@ -746,7 +737,7 @@ impl Pow<Decimal> for Decimal {
 
 impl Pow<u64> for Decimal {
     type Output = Decimal;
-
+    #[inline]
     fn pow(self, rhs: u64) -> Self::Output {
         MathematicalOps::powu(&self, rhs)
     }
@@ -754,7 +745,7 @@ impl Pow<u64> for Decimal {
 
 impl Pow<i64> for Decimal {
     type Output = Decimal;
-
+    #[inline]
     fn pow(self, rhs: i64) -> Self::Output {
         MathematicalOps::powi(&self, rhs)
     }
@@ -762,7 +753,7 @@ impl Pow<i64> for Decimal {
 
 impl Pow<f64> for Decimal {
     type Output = Decimal;
-
+    #[inline]
     fn pow(self, rhs: f64) -> Self::Output {
         MathematicalOps::powf(&self, rhs)
     }

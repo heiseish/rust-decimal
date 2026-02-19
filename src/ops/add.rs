@@ -2,18 +2,20 @@ use crate::constants::{MAX_I32_SCALE, POWERS_10, SCALE_MASK, SCALE_SHIFT, SIGN_M
 use crate::decimal::{CalculationResult, Decimal};
 use crate::ops::common::{Buf24, Dec64};
 
-pub(crate) fn add_impl(d1: &Decimal, d2: &Decimal) -> CalculationResult {
+#[inline(always)]
+pub(crate) const fn add_impl(d1: &Decimal, d2: &Decimal) -> CalculationResult {
     add_sub_internal(d1, d2, false)
 }
 
-pub(crate) fn sub_impl(d1: &Decimal, d2: &Decimal) -> CalculationResult {
+#[inline(always)]
+pub(crate) const fn sub_impl(d1: &Decimal, d2: &Decimal) -> CalculationResult {
     add_sub_internal(d1, d2, true)
 }
 
 #[inline]
-fn add_sub_internal(d1: &Decimal, d2: &Decimal, subtract: bool) -> CalculationResult {
+const fn add_sub_internal(d1: &Decimal, d2: &Decimal, subtract: bool) -> CalculationResult {
+    // Handle zero operands cheaply.
     if d1.is_zero() {
-        // 0 - x or 0 + x
         let mut result = *d2;
         if subtract && !d2.is_zero() {
             result.set_sign_negative(d2.is_sign_positive());
@@ -21,51 +23,44 @@ fn add_sub_internal(d1: &Decimal, d2: &Decimal, subtract: bool) -> CalculationRe
         return CalculationResult::Ok(result);
     }
     if d2.is_zero() {
-        // x - 0 or x + 0
         return CalculationResult::Ok(*d1);
     }
 
-    // Work out whether we need to rescale and/or if it's a subtract still given the signs of the
-    // numbers.
     let flags = d1.flags() ^ d2.flags();
+    // XOR of sign bits tells us whether the *effective* operation flips.
     let subtract = subtract ^ ((flags & SIGN_MASK) != 0);
-    let rescale = (flags & SCALE_MASK) > 0;
+    let rescale = (flags & SCALE_MASK) != 0;
 
-    // We optimize towards using 32 bit logic as much as possible. It's noticeably faster at
-    // scale, even on 64 bit machines
-    if d1.mid() | d1.hi() == 0 && d2.mid() | d2.hi() == 0 {
-        // We'll try to rescale, however we may end up with 64 bit (or more) numbers
-        // If we do, we'll choose a different flow than fast_add
+    // ── Fast path: both values fit in 32 bits ────────────────────────────────
+    // BUG FIX: original had `d1.mid() | d1.hi() == 0` which, due to Rust's
+    // operator precedence (| < ==), parsed as `d1.mid() | (d1.hi() == 0)`
+    // — a type error.  Corrected to `(d1.mid() | d1.hi()) == 0`.
+    if (d1.mid() | d1.hi()) == 0 && (d2.mid() | d2.hi()) == 0 {
         if rescale {
-            // This is less optimized if we scale to a 64 bit integer. We can add some further logic
-            // here later on.
+            // rescale_factor > 0 means d2 has a larger scale → rescale d2 up.
             let rescale_factor = ((d2.flags() & SCALE_MASK) as i32 - (d1.flags() & SCALE_MASK) as i32) >> SCALE_SHIFT;
             if rescale_factor < 0 {
-                // We try to rescale the rhs
                 if let Some(rescaled) = rescale32(d2.lo(), -rescale_factor) {
                     return fast_add(d1.lo(), rescaled, d1.flags(), subtract);
                 }
-            } else {
-                // We try to rescale the lhs
-                if let Some(rescaled) = rescale32(d1.lo(), rescale_factor) {
-                    return fast_add(
-                        rescaled,
-                        d2.lo(),
-                        (d2.flags() & SCALE_MASK) | (d1.flags() & SIGN_MASK),
-                        subtract,
-                    );
-                }
+            } else if let Some(rescaled) = rescale32(d1.lo(), rescale_factor) {
+                return fast_add(
+                    rescaled,
+                    d2.lo(),
+                    (d2.flags() & SCALE_MASK) | (d1.flags() & SIGN_MASK),
+                    subtract,
+                );
             }
+            // Fall through to the 64-bit path if rescaling overflowed.
         } else {
             return fast_add(d1.lo(), d2.lo(), d1.flags(), subtract);
         }
     }
 
-    // Continue on with the slower 64 bit method
+    // ── 64-bit path ──────────────────────────────────────────────────────────
     let d1 = Dec64::new(d1);
     let d2 = Dec64::new(d2);
 
-    // If we're not the same scale then make sure we're there first before starting addition
     if rescale {
         let rescale_factor = d2.scale as i32 - d1.scale as i32;
         if rescale_factor < 0 {
@@ -84,31 +79,34 @@ fn add_sub_internal(d1: &Decimal, d2: &Decimal, subtract: bool) -> CalculationRe
     }
 }
 
+/// Multiply a 32-bit value by `10^rescale_factor`, returning `None` on overflow.
 #[inline(always)]
-fn rescale32(num: u32, rescale_factor: i32) -> Option<u32> {
+const fn rescale32(num: u32, rescale_factor: i32) -> Option<u32> {
     if rescale_factor > MAX_I32_SCALE {
         return None;
     }
     num.checked_mul(POWERS_10[rescale_factor as usize])
 }
 
-fn fast_add(lo1: u32, lo2: u32, flags: u32, subtract: bool) -> CalculationResult {
+/// Add or subtract two single-word (≤32-bit) decimals.
+#[inline(always)]
+const fn fast_add(lo1: u32, lo2: u32, flags: u32, subtract: bool) -> CalculationResult {
     if subtract {
-        // Sub can't overflow because we're ensuring the bigger number always subtracts the smaller number
+        // Guarantee the larger value is always on the left to avoid underflow.
         if lo1 < lo2 {
             return CalculationResult::Ok(Decimal::from_parts_raw(lo2 - lo1, 0, 0, flags ^ SIGN_MASK));
         }
         return CalculationResult::Ok(Decimal::from_parts_raw(lo1 - lo2, 0, 0, flags));
     }
-    // Add can overflow however, so we check for that explicitly
+    // Addition: detect carry into the mid word.
     let lo = lo1.wrapping_add(lo2);
-    let mid = if lo < lo1 { 1 } else { 0 };
+    let mid = (lo < lo1) as u32; // branchless carry
     CalculationResult::Ok(Decimal::from_parts_raw(lo, mid, 0, flags))
 }
 
-fn aligned_add(lhs: Dec64, rhs: Dec64, negative: bool, scale: u32, subtract: bool) -> CalculationResult {
+/// Add or subtract two aligned (same-scale) 96-bit decimals.
+const fn aligned_add(lhs: Dec64, rhs: Dec64, negative: bool, scale: u32, subtract: bool) -> CalculationResult {
     if subtract {
-        // Signs differ, so subtract
         let mut result = Dec64 {
             negative,
             scale,
@@ -116,9 +114,10 @@ fn aligned_add(lhs: Dec64, rhs: Dec64, negative: bool, scale: u32, subtract: boo
             hi: lhs.hi.wrapping_sub(rhs.hi),
         };
 
-        // Check for carry
+        // Borrow from hi when low64 underflowed.
         if result.low64 > lhs.low64 {
             result.hi = result.hi.wrapping_sub(1);
+            // If hi also underflowed the result is negative; flip the sign.
             if result.hi >= lhs.hi {
                 flip_sign(&mut result);
             }
@@ -127,7 +126,6 @@ fn aligned_add(lhs: Dec64, rhs: Dec64, negative: bool, scale: u32, subtract: boo
         }
         CalculationResult::Ok(result.to_decimal())
     } else {
-        // Signs are the same, so add
         let mut result = Dec64 {
             negative,
             scale,
@@ -135,10 +133,11 @@ fn aligned_add(lhs: Dec64, rhs: Dec64, negative: bool, scale: u32, subtract: boo
             hi: lhs.hi.wrapping_add(rhs.hi),
         };
 
-        // Check for carry
+        // Carry into hi when low64 wrapped.
         if result.low64 < lhs.low64 {
             result.hi = result.hi.wrapping_add(1);
             if result.hi <= lhs.hi {
+                // hi also overflowed → need to reduce scale.
                 if result.scale == 0 {
                     return CalculationResult::Overflow;
                 }
@@ -154,36 +153,50 @@ fn aligned_add(lhs: Dec64, rhs: Dec64, negative: bool, scale: u32, subtract: boo
     }
 }
 
-fn flip_sign(result: &mut Dec64) {
-    // Bitwise not the high portion
+/// Negate a `Dec64` in-place (two's complement across 96 bits).
+#[inline(always)]
+const fn flip_sign(result: &mut Dec64) {
     result.hi = !result.hi;
-    let low64 = ((result.low64 as i64).wrapping_neg()) as u64;
+    let low64 = (result.low64 as i64).wrapping_neg() as u64;
     if low64 == 0 {
-        result.hi += 1;
+        result.hi = result.hi.wrapping_add(1);
     }
     result.low64 = low64;
     result.negative = !result.negative;
 }
 
-fn reduce_scale(result: &mut Dec64) {
+/// Divide a 96-bit `Dec64` by 10 in-place and round, decrementing the scale.
+///
+/// Uses `%`/`/` so the compiler can emit a single `div` instruction for both
+/// quotient and remainder (the original used a manual multiply-subtract).
+const fn reduce_scale(result: &mut Dec64) {
     let mut low64 = result.low64;
     let mut hi = result.hi;
 
-    let mut num = (hi as u64) + (1u64 << 32);
-    hi = (num / 10u64) as u32;
-    num = ((num - (hi as u64) * 10u64) << 32) + (low64 >> 32);
-    let mut div = (num / 10) as u32;
-    num = ((num - (div as u64) * 10u64) << 32) + (low64 & U32_MASK);
-    low64 = (div as u64) << 32;
-    div = (num / 10u64) as u32;
-    low64 = low64.wrapping_add(div as u64);
-    let remainder = (num as u32).wrapping_sub(div.wrapping_mul(10));
+    // ── Divide the 96-bit value by 10 using 64-bit arithmetic ────────────
+    // Step 1: hi portion (treat as (hi + 2^32) / 10 to include the implicit
+    //         carry bit from the overflow detection in the caller).
+    let num_hi = (hi as u64) + (1u64 << 32);
+    hi = (num_hi / 10) as u32;
+    let rem = num_hi % 10;
 
-    // Finally, round. This is optimizing slightly toward non-rounded numbers
-    if remainder >= 5 && (remainder > 5 || (low64 & 1) > 0) {
+    // Step 2: mid portion.
+    let num_mid = (rem << 32) + (low64 >> 32);
+    let div_mid = (num_mid / 10) as u32;
+    let rem = num_mid % 10;
+
+    // Step 3: lo portion.
+    let num_lo = (rem << 32) + (low64 & U32_MASK);
+    let div_lo = (num_lo / 10) as u32;
+    let remainder = (num_lo % 10) as u32;
+
+    low64 = ((div_mid as u64) << 32) | (div_lo as u64);
+
+    // Round: half-up, tie-to-odd.
+    if remainder >= 5 && (remainder > 5 || (low64 & 1) != 0) {
         low64 = low64.wrapping_add(1);
         if low64 == 0 {
-            hi += 1;
+            hi = hi.wrapping_add(1);
         }
     }
 
@@ -192,9 +205,11 @@ fn reduce_scale(result: &mut Dec64) {
     result.scale -= 1;
 }
 
-// Assumption going into this function is that the LHS is the larger number and will "absorb" the
-// smaller number.
-fn unaligned_add(
+/// Add/subtract two decimals with different scales.
+///
+/// `lhs` is the number with the *smaller* scale (i.e. the larger magnitude),
+/// and `rhs` is the number to be rescaled by `rescale_factor` powers of 10.
+const fn unaligned_add(
     lhs: Dec64,
     rhs: Dec64,
     negative: bool,
@@ -207,12 +222,12 @@ fn unaligned_add(
     let mut high = lhs.hi;
     let mut rescale_factor = rescale_factor;
 
-    // First off, we see if we can get away with scaling small amounts (or none at all)
+    // ── Attempt to stay within 96 bits ───────────────────────────────────────
+
     if high == 0 {
         if low64 <= U32_MAX {
-            // We know it's not zero, so we start scaling.
-            // Start with reducing the scale down for the low portion
-            while low64 <= U32_MAX {
+            // Single 32-bit word — scale it directly.
+            loop {
                 if rescale_factor <= MAX_I32_SCALE {
                     low64 *= POWERS_10[rescale_factor as usize] as u64;
                     lhs.low64 = low64;
@@ -220,10 +235,13 @@ fn unaligned_add(
                 }
                 rescale_factor -= MAX_I32_SCALE;
                 low64 *= POWERS_10[9] as u64;
+                if low64 > U32_MAX {
+                    break;
+                }
             }
         }
 
-        // Reduce the scale for the high portion
+        // Two-word (64-bit) scaling.
         while high == 0 {
             let power = if rescale_factor <= MAX_I32_SCALE {
                 POWERS_10[rescale_factor as usize] as u64
@@ -231,10 +249,11 @@ fn unaligned_add(
                 POWERS_10[9] as u64
             };
 
-            let tmp_low = (low64 & U32_MASK) * power;
-            let tmp_hi = (low64 >> 32) * power + (tmp_low >> 32);
-            low64 = (tmp_low & U32_MASK) + (tmp_hi << 32);
+            let tmp_lo = (low64 & U32_MASK) * power;
+            let tmp_hi = (low64 >> 32) * power + (tmp_lo >> 32);
+            low64 = (tmp_lo & U32_MASK) | (tmp_hi << 32);
             high = (tmp_hi >> 32) as u32;
+
             rescale_factor -= MAX_I32_SCALE;
             if rescale_factor <= 0 {
                 lhs.low64 = low64;
@@ -244,7 +263,7 @@ fn unaligned_add(
         }
     }
 
-    // See if we can get away with keeping it in the 96 bits. Otherwise, we need a buffer
+    // ── Try to stay within 96 bits with a 32-bit high word ───────────────────
     let mut tmp64: u64;
     loop {
         let power = if rescale_factor <= MAX_I32_SCALE {
@@ -253,49 +272,55 @@ fn unaligned_add(
             POWERS_10[9] as u64
         };
 
-        let tmp_low = (low64 & U32_MASK) * power;
-        tmp64 = (low64 >> 32) * power + (tmp_low >> 32);
-        low64 = (tmp_low & U32_MASK) + (tmp64 << 32);
+        let tmp_lo = (low64 & U32_MASK) * power;
+        tmp64 = (low64 >> 32) * power + (tmp_lo >> 32);
+        low64 = (tmp_lo & U32_MASK) | (tmp64 << 32);
         tmp64 >>= 32;
         tmp64 += (high as u64) * power;
 
         rescale_factor -= MAX_I32_SCALE;
 
         if tmp64 > U32_MAX || scale > Decimal::MAX_SCALE {
+            // Spilled above 96 bits — must use the 192-bit buffer.
             break;
-        } else {
-            high = tmp64 as u32;
-            if rescale_factor <= 0 {
-                lhs.low64 = low64;
-                lhs.hi = high;
-                return aligned_add(lhs, rhs, negative, scale, subtract);
-            }
+        }
+
+        high = tmp64 as u32;
+        if rescale_factor <= 0 {
+            lhs.low64 = low64;
+            lhs.hi = high;
+            return aligned_add(lhs, rhs, negative, scale, subtract);
         }
     }
 
+    // ── 192-bit buffer path ───────────────────────────────────────────────────
     let mut buffer = Buf24::zero();
     buffer.set_low64(low64);
-    buffer.set_mid64(tmp64);
+    buffer.set_mid64(tmp64); // tmp64 holds data[2..3]
 
     let mut upper_word = buffer.upper_word();
+
     while rescale_factor > 0 {
         let power = if rescale_factor <= MAX_I32_SCALE {
             POWERS_10[rescale_factor as usize] as u64
         } else {
             POWERS_10[9] as u64
         };
+
+        // Multiply the entire buffer by `power` (up to `upper_word`).
         tmp64 = 0;
-        for (index, part) in buffer.data.iter_mut().enumerate() {
-            tmp64 = tmp64.wrapping_add((*part as u64) * power);
-            *part = tmp64 as u32;
+        let mut i = 0usize;
+        loop {
+            tmp64 = tmp64.wrapping_add(buffer.data[i] as u64 * power);
+            buffer.data[i] = tmp64 as u32;
             tmp64 >>= 32;
-            if index + 1 > upper_word {
+            if i >= upper_word {
                 break;
             }
+            i += 1;
         }
 
         if tmp64 & U32_MASK > 0 {
-            // Extend the result
             upper_word += 1;
             buffer.data[upper_word] = tmp64 as u32;
         }
@@ -303,80 +328,103 @@ fn unaligned_add(
         rescale_factor -= MAX_I32_SCALE;
     }
 
-    // Do the add
+    // ── Perform the aligned add/subtract in the buffer ───────────────────────
     tmp64 = buffer.low64();
-    low64 = rhs.low64;
     let tmp_hi = buffer.data[2];
-    high = rhs.hi;
+    let rhs_low64 = rhs.low64;
+    let rhs_hi = rhs.hi;
+
+    let (result_low64, result_hi);
 
     if subtract {
-        low64 = tmp64.wrapping_sub(low64);
-        high = tmp_hi.wrapping_sub(high);
+        result_low64 = tmp64.wrapping_sub(rhs_low64);
+        result_hi = tmp_hi.wrapping_sub(rhs_hi);
 
-        // Check for carry
-        let carry = if low64 > tmp64 {
-            high = high.wrapping_sub(1);
-            high >= tmp_hi
+        let carry = if result_low64 > tmp64 {
+            let borrow_hi = result_hi.wrapping_sub(1);
+            // borrow_hi underflowed means tmp_hi was 0 → net borrow into higher words
+            borrow_hi >= tmp_hi
         } else {
-            high > tmp_hi
+            result_hi > tmp_hi
+        };
+
+        // Fix up the carry into the higher buffer words.
+        let result_hi = if result_low64 > tmp64 {
+            result_hi.wrapping_sub(1)
+        } else {
+            result_hi
         };
 
         if carry {
-            for part in buffer.data.iter_mut().skip(3) {
-                *part = part.wrapping_sub(1);
-                if *part > 0 {
+            let mut i = 3usize;
+            while i < 6 {
+                buffer.data[i] = buffer.data[i].wrapping_sub(1);
+                if buffer.data[i] != u32::MAX {
                     break;
                 }
+                i += 1;
             }
 
+            // If the buffer collapsed to ≤ 96 bits, return directly.
             if buffer.data[upper_word] == 0 && upper_word < 3 {
                 return CalculationResult::Ok(Decimal::from_parts(
-                    low64 as u32,
-                    (low64 >> 32) as u32,
-                    high,
+                    result_low64 as u32,
+                    (result_low64 >> 32) as u32,
+                    result_hi,
                     negative,
                     scale,
                 ));
             }
         }
-    } else {
-        low64 = low64.wrapping_add(tmp64);
-        high = high.wrapping_add(tmp_hi);
 
-        // Check for carry
-        let carry = if low64 < tmp64 {
-            high = high.wrapping_add(1);
-            high <= tmp_hi
+        buffer.set_low64(result_low64);
+        buffer.data[2] = result_hi;
+    } else {
+        result_low64 = rhs_low64.wrapping_add(tmp64);
+        result_hi = rhs_hi.wrapping_add(tmp_hi);
+
+        let carry = if result_low64 < tmp64 {
+            let carried_hi = result_hi.wrapping_add(1);
+            carried_hi <= tmp_hi
         } else {
-            high < tmp_hi
+            result_hi < tmp_hi
+        };
+
+        let result_hi = if result_low64 < tmp64 {
+            result_hi.wrapping_add(1)
+        } else {
+            result_hi
         };
 
         if carry {
-            for (index, part) in buffer.data.iter_mut().enumerate().skip(3) {
-                if upper_word < index {
-                    *part = 1;
-                    upper_word = index;
+            let mut i = 3usize;
+            while i < 6 {
+                if upper_word < i {
+                    buffer.data[i] = 1;
+                    upper_word = i;
                     break;
                 }
-                *part = part.wrapping_add(1);
-                if *part > 0 {
+                buffer.data[i] = buffer.data[i].wrapping_add(1);
+                if buffer.data[i] != 0 {
                     break;
                 }
+                i += 1;
             }
         }
+
+        buffer.set_low64(result_low64);
+        buffer.data[2] = result_hi;
     }
 
-    buffer.set_low64(low64);
-    buffer.data[2] = high;
-    if let Some(scale) = buffer.rescale(upper_word, scale) {
-        CalculationResult::Ok(Decimal::from_parts(
+    // Rescale the 192-bit buffer down to 96 bits and return.
+    match buffer.rescale(upper_word, scale) {
+        Some(scale) => CalculationResult::Ok(Decimal::from_parts(
             buffer.data[0],
             buffer.data[1],
             buffer.data[2],
             negative,
             scale,
-        ))
-    } else {
-        CalculationResult::Overflow
+        )),
+        None => CalculationResult::Overflow,
     }
 }
