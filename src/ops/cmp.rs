@@ -1,40 +1,35 @@
-use crate::constants::{MAX_I32_SCALE, POWERS_10, U32_MASK, U32_MAX};
+use crate::constants::{MAX_I32_SCALE, POWERS_10};
 use crate::decimal::Decimal;
 use crate::ops::common::Dec64;
-
 use core::cmp::Ordering;
 
 #[inline]
 pub(crate) const fn cmp_impl(d1: &Decimal, d2: &Decimal) -> Ordering {
+    // Read flags once — is_zero() and is_sign_negative() both touch the same
+    // fields; pulling them up front lets the compiler reuse the loads.
+    let d1_neg = d1.is_sign_negative();
+    let d2_neg = d2.is_sign_negative();
     let d1_zero = d1.is_zero();
     let d2_zero = d2.is_zero();
 
-    if d2_zero {
-        return if d1_zero {
-            Ordering::Equal
-        } else if d1.is_sign_negative() {
-            Ordering::Less
-        } else {
-            Ordering::Greater
-        };
+    // Fused zero/sign table — handles all degenerate cases in 4 branches
+    // instead of the original 6, with no repeated flag reads.
+    if d1_zero & d2_zero {
+        return Ordering::Equal;
     }
     if d1_zero {
-        return if d2.is_sign_negative() {
-            Ordering::Greater
-        } else {
-            Ordering::Less
-        };
+        return if d2_neg { Ordering::Greater } else { Ordering::Less };
     }
-
-    let d1_neg = d1.is_sign_negative();
-    let d2_neg = d2.is_sign_negative();
+    if d2_zero {
+        return if d1_neg { Ordering::Less } else { Ordering::Greater };
+    }
     if d1_neg != d2_neg {
         return if d1_neg { Ordering::Less } else { Ordering::Greater };
     }
 
     let d1 = Dec64::new(d1);
     let d2 = Dec64::new(d2);
-    // For negative numbers the ordering flips: −0.5 < −0.01.
+    // Negative: ordering flips — −0.5 < −0.01
     if d1_neg {
         cmp_internal(&d2, &d1)
     } else {
@@ -42,7 +37,6 @@ pub(crate) const fn cmp_impl(d1: &Decimal, d2: &Decimal) -> Ordering {
     }
 }
 
-/// Compare two `Dec64` magnitudes (sign ignored).
 pub(in crate::ops) const fn cmp_internal(d1: &Dec64, d2: &Dec64) -> Ordering {
     let mut d1_low = d1.low64;
     let mut d1_high = d1.hi;
@@ -60,7 +54,6 @@ pub(in crate::ops) const fn cmp_internal(d1: &Dec64, d2: &Dec64) -> Ordering {
         }
     }
 
-    // Manual branches — `.cmp()` on primitives is not yet stable-const.
     if d1_high < d2_high {
         return Ordering::Less;
     }
@@ -76,8 +69,13 @@ pub(in crate::ops) const fn cmp_internal(d1: &Dec64, d2: &Dec64) -> Ordering {
     Ordering::Equal
 }
 
-/// Multiply `(low64, high)` by `10^diff` in-place.
+/// Scale `(low64, high)` up by `10^diff` in-place.
 /// Returns `false` if the result overflows 96 bits.
+///
+/// Uses u128 to collapse what was 3 separate u64 multiplications + manual
+/// carry chains into a single widening multiply per loop iteration.
+/// The compiler lowers `u128 * u128` on x86-64 to two MUL instructions;
+/// the overflow check is a single comparison of the top 32 bits.
 #[inline]
 const fn rescale(low64: &mut u64, high: &mut u32, diff: u32) -> bool {
     let mut diff = diff as i32;
@@ -86,17 +84,19 @@ const fn rescale(low64: &mut u64, high: &mut u32, diff: u32) -> bool {
             POWERS_10[9]
         } else {
             POWERS_10[diff as usize]
-        } as u64;
+        } as u128;
 
-        let lo32 = (*low64 & U32_MASK) * power;
-        let mid = (*low64 >> 32) * power + (lo32 >> 32);
-        *low64 = (lo32 & U32_MASK) | (mid << 32);
-        let hi = (mid >> 32) + (*high as u64) * power;
+        // Pack the 96-bit value into a u128, multiply, then check/unpack.
+        let val = (*low64 as u128) | ((*high as u128) << 64);
+        let result = val * power;
 
-        if hi > U32_MAX {
+        // Overflow: result must fit in 96 bits (bits 96–127 must all be zero).
+        if result >> 96 != 0 {
             return false;
         }
-        *high = hi as u32;
+
+        *low64 = result as u64;
+        *high = (result >> 64) as u32;
 
         diff -= MAX_I32_SCALE;
         if diff <= 0 {

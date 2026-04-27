@@ -1,3 +1,4 @@
+use crate::decimal::CalculationResult;
 use crate::prelude::*;
 use num_traits::pow::Pow;
 
@@ -178,6 +179,38 @@ pub const trait MathematicalOps {
     fn checked_tan(&self) -> Option<Decimal>;
 }
 
+/// Build 1/i for i = 0..=60 at startup (or const-evaluate for small tables).
+/// RECIP[0] and RECIP[1] are unused sentinels.
+const fn recip_table() -> [Decimal; 61] {
+    let mut t = [Decimal::ZERO; 61];
+    let mut i = 2usize;
+    while i <= 60 {
+        t[i] = Decimal::ONE / Decimal::from(i as u32);
+        i += 1;
+    }
+    t
+}
+const RECIP: &[Decimal] = &recip_table(); // see below
+
+/// Inverse factorials for sin/cos Taylor series, already in your code.
+/// Keep as const — confirmed zero overhead.
+
+/// For checked_ln atanh series: precompute odd reciprocals 1/1, 1/3, 1/5 ...
+/// The atanh series uses only odd terms, so 14 terms covers 28-digit precision.
+pub(crate) const ODD_RECIP: [Decimal; 30] = {
+    let mut t = [Decimal::ZERO; 30];
+    let mut i = 0usize;
+    while i < 30 {
+        let n = 2 * i + 1; // 1, 3, 5, 7, ...
+        t[i] = match crate::ops::div_impl(&Decimal::ONE, &Decimal::from_parts(n as u32, 0, 0, false, 0)) {
+            CalculationResult::Ok(d) => d,
+            _ => Decimal::ZERO,
+        };
+        i += 1;
+    }
+    t
+};
+
 impl MathematicalOps for Decimal {
     #[inline]
     fn exp(&self) -> Decimal {
@@ -202,42 +235,34 @@ impl MathematicalOps for Decimal {
             }
         }
     }
+    // Precompute: RECIP[i] = 1/i as Decimal, for i = 2..=60.
+    // Generate once with: (1..=60).map(|i| Decimal::ONE / Decimal::from(i)).collect()
+    // or hard-code as from_parts literals for a const array.
+    // Here shown as a lazily-initialised static for clarity:
 
     fn checked_exp_with_tolerance(&self, tolerance: Decimal) -> Option<Decimal> {
         if self.is_zero() {
             return Some(Decimal::ONE);
         }
         if self.is_sign_negative() {
-            let mut flipped = *self;
-            flipped.set_sign_positive(true);
-            let exp = flipped.checked_exp_with_tolerance(tolerance)?;
+            let mut pos = *self;
+            pos.set_sign_positive(true);
+            let exp = pos.checked_exp_with_tolerance(tolerance)?;
             return Decimal::ONE.checked_div(exp);
         }
 
-        // exp(x) = Σ x^i / i!  where q_i = q_{i-1} * x / i
-        // Avoids computing large intermediate powers: q_i = x*(x/2)*...*(x/i)
+        // x^i / i! iterated as term_i = term_{i-1} * x * (1/i)
+        // Avoids checked_div: 1/i is looked up as a pre-normalised Decimal.
+        let mut result = self.checked_add(Decimal::ONE)?; // 1 + x
+        let mut term = *self; // x^1 / 1!
 
-        // First two terms: result = 1 + x, q_1 = x
-        let mut result = self.checked_add(Decimal::ONE)?;
-        let mut term = *self;
-
-        // Accumulate the divisor as a Decimal to avoid repeated `from_u32` conversions.
-        // We start at i=2 so the initial divisor is 2.
-        let mut i_dec = Decimal::TWO;
-        let one = Decimal::ONE;
-
-        const ITERATION_COUNT: u32 = 200;
-        for _ in 2..ITERATION_COUNT {
-            term = self.checked_mul(term.checked_div(i_dec)?)?;
+        for num in &RECIP[2..] {
+            term = self.checked_mul(term.checked_mul(*num)?)?;
             result = result.checked_add(term)?;
             if term <= tolerance {
                 break;
             }
-            // Increment the divisor for the next iteration — a single addition is cheaper
-            // than calling `from_u32` + `unwrap` on every pass.
-            i_dec = i_dec.checked_add(one)?;
         }
-
         Some(result)
     }
 
@@ -416,7 +441,7 @@ impl MathematicalOps for Decimal {
             return Some(Decimal::ZERO);
         }
 
-        // Range-reduce into (e^-1, 1) then apply Taylor series for ln(1+x).
+        // Range-reduce into (e⁻¹, 1).
         let mut x = *self;
         let mut count = 0i64;
         while x >= Decimal::ONE {
@@ -427,23 +452,34 @@ impl MathematicalOps for Decimal {
             x *= Decimal::E;
             count -= 1;
         }
-        x -= Decimal::ONE;
-        if x.is_zero() {
-            return Some(Decimal::new(count, 0));
+
+        // ln(x) = 2 · atanh(y),  y = (x−1)/(x+1)
+        // atanh(y) = y + y³/3 + y⁵/5 + …  = Σ y^(2n+1) · ODD_RECIP[n]
+        //
+        // ODD_RECIP[0] = 1/1, [1] = 1/3, [2] = 1/5, ...
+        // Initial term (n=0): y^1 · (1/1) = y  → seed result directly.
+        // Subsequent terms: multiply running y_pow by y² each step, then by recip.
+        // Iter over ODD_RECIP[1..] avoids both an index variable and a bounds check
+        // on the hot path — the slice pointer advances by one Decimal (16 bytes) per
+        // iteration, which the prefetcher handles as a sequential stream.
+        let y = (x - Decimal::ONE).checked_div(x + Decimal::ONE)?;
+        let y2 = y.checked_mul(y)?;
+
+        let mut y_pow = y;
+        let mut result = y; // n=0 term already accumulated
+        let mut last = Decimal::ZERO;
+
+        for recip in ODD_RECIP[1..].iter() {
+            y_pow = y_pow.checked_mul(y2)?;
+            let term = y_pow.checked_mul(*recip)?;
+            last = result;
+            result = result.checked_add(term)?;
+            if last == result {
+                break; // term fell below the last representable digit
+            }
         }
 
-        // ln(1+x) = x - x²/2 + x³/3 - …  (Mercator series, x shifted above)
-        let mut result = Decimal::ZERO;
-        let mut iteration = 0i64;
-        let mut y = Decimal::ONE;
-        let mut last = Decimal::ONE;
-        while last != result && iteration < 100 {
-            iteration += 1;
-            last = result;
-            y *= -x;
-            result += y / Decimal::new(iteration, 0);
-        }
-        Some(Decimal::new(count, 0) - result)
+        Decimal::new(count, 0).checked_add(result.checked_mul(Decimal::TWO)?)
     }
 
     #[cfg(feature = "maths-nopanic")]

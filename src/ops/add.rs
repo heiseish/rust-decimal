@@ -170,38 +170,22 @@ const fn flip_sign(result: &mut Dec64) {
 /// Uses `%`/`/` so the compiler can emit a single `div` instruction for both
 /// quotient and remainder (the original used a manual multiply-subtract).
 const fn reduce_scale(result: &mut Dec64) {
-    let mut low64 = result.low64;
-    let mut hi = result.hi;
+    // Pack the true 97-bit value: caller detected overflow so bit 96 is set.
+    let val = (result.low64 as u128) | ((result.hi as u128) << 64) | (1u128 << 96);
 
-    // ── Divide the 96-bit value by 10 using 64-bit arithmetic ────────────
-    // Step 1: hi portion (treat as (hi + 2^32) / 10 to include the implicit
-    //         carry bit from the overflow detection in the caller).
-    let num_hi = (hi as u64) + (1u64 << 32);
-    hi = (num_hi / 10) as u32;
-    let rem = num_hi % 10;
+    let q = val / 10u128;
+    let r = (val % 10u128) as u32;
 
-    // Step 2: mid portion.
-    let num_mid = (rem << 32) + (low64 >> 32);
-    let div_mid = (num_mid / 10) as u32;
-    let rem = num_mid % 10;
+    result.low64 = q as u64;
+    result.hi = (q >> 64) as u32;
 
-    // Step 3: lo portion.
-    let num_lo = (rem << 32) + (low64 & U32_MASK);
-    let div_lo = (num_lo / 10) as u32;
-    let remainder = (num_lo % 10) as u32;
-
-    low64 = ((div_mid as u64) << 32) | (div_lo as u64);
-
-    // Round: half-up, tie-to-odd.
-    if remainder >= 5 && (remainder > 5 || (low64 & 1) != 0) {
-        low64 = low64.wrapping_add(1);
-        if low64 == 0 {
-            hi = hi.wrapping_add(1);
+    // Round half-up, tie-to-odd — identical semantics, one branch.
+    if r > 5 || (r == 5 && (result.low64 & 1) != 0) {
+        result.low64 = result.low64.wrapping_add(1);
+        if result.low64 == 0 {
+            result.hi = result.hi.wrapping_add(1);
         }
     }
-
-    result.low64 = low64;
-    result.hi = hi;
     result.scale -= 1;
 }
 
@@ -244,15 +228,14 @@ const fn unaligned_add(
         // Two-word (64-bit) scaling.
         while high == 0 {
             let power = if rescale_factor <= MAX_I32_SCALE {
-                POWERS_10[rescale_factor as usize] as u64
+                POWERS_10[rescale_factor as usize]
             } else {
-                POWERS_10[9] as u64
-            };
+                POWERS_10[9]
+            } as u128;
 
-            let tmp_lo = (low64 & U32_MASK) * power;
-            let tmp_hi = (low64 >> 32) * power + (tmp_lo >> 32);
-            low64 = (tmp_lo & U32_MASK) | (tmp_hi << 32);
-            high = (tmp_hi >> 32) as u32;
+            let result = low64 as u128 * power;
+            low64 = result as u64;
+            high = (result >> 64) as u32;
 
             rescale_factor -= MAX_I32_SCALE;
             if rescale_factor <= 0 {
@@ -267,22 +250,21 @@ const fn unaligned_add(
     let mut tmp64: u64;
     loop {
         let power = if rescale_factor <= MAX_I32_SCALE {
-            POWERS_10[rescale_factor as usize] as u64
+            POWERS_10[rescale_factor as usize]
         } else {
-            POWERS_10[9] as u64
-        };
+            POWERS_10[9]
+        } as u128;
 
-        let tmp_lo = (low64 & U32_MASK) * power;
-        tmp64 = (low64 >> 32) * power + (tmp_lo >> 32);
-        low64 = (tmp_lo & U32_MASK) | (tmp64 << 32);
-        tmp64 >>= 32;
-        tmp64 += (high as u64) * power;
+        let val96 = low64 as u128 | ((high as u128) << 64);
+        let result = val96 * power;
+
+        low64 = result as u64;
+        tmp64 = (result >> 64) as u64; // holds bits 64-127 of result
 
         rescale_factor -= MAX_I32_SCALE;
 
         if tmp64 > U32_MAX || scale > Decimal::MAX_SCALE {
-            // Spilled above 96 bits — must use the 192-bit buffer.
-            break;
+            break; // spilled — fall through to Buf24 path
         }
 
         high = tmp64 as u32;

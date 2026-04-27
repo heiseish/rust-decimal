@@ -9,15 +9,14 @@ impl Buf12 {
     /// Returns `Err(DivError::Overflow)` if the result exceeds 96 bits.
     #[inline(always)]
     const fn add32(&mut self, value: u32) -> Result<(), DivError> {
-        let value = value as u64;
-        let new = self.low64().wrapping_add(value);
-        self.set_low64(new);
-        if new < value {
-            self.data[2] = self.data[2].wrapping_add(1);
-            if self.data[2] == 0 {
-                return Err(DivError::Overflow);
-            }
+        let val = self.data[0] as u128 | ((self.data[1] as u128) << 32) | ((self.data[2] as u128) << 64);
+        let result = val + value as u128;
+        if result >> 96 != 0 {
+            return Err(DivError::Overflow);
         }
+        self.data[0] = result as u32;
+        self.data[1] = (result >> 32) as u32;
+        self.data[2] = (result >> 64) as u32;
         Ok(())
     }
 
@@ -458,25 +457,23 @@ pub(crate) const fn div_impl(dividend: &Decimal, divisor: &Decimal) -> Calculati
 /// Multiply a 96-bit `Buf12` by `power`, returning any overflow word.
 #[inline(always)]
 const fn increase_scale(num: &mut Buf12, power: u64) -> u32 {
-    let mut tmp = num.data[0] as u64 * power;
-    num.data[0] = tmp as u32;
-    tmp >>= 32;
-    tmp += num.data[1] as u64 * power;
-    num.data[1] = tmp as u32;
-    tmp >>= 32;
-    tmp += num.data[2] as u64 * power;
-    num.data[2] = tmp as u32;
-    (tmp >> 32) as u32
+    let val = num.data[0] as u128 | ((num.data[1] as u128) << 32) | ((num.data[2] as u128) << 64);
+    let result = val * power as u128;
+    num.data[0] = result as u32;
+    num.data[1] = (result >> 32) as u32;
+    num.data[2] = (result >> 64) as u32;
+    (result >> 96) as u32
 }
 
 /// Multiply the low 96 bits of a `Buf16` by `power`.
 #[inline(always)]
 const fn increase_scale64(num: &mut Buf16, power: u64) {
-    let mut tmp = num.data[0] as u64 * power;
-    num.data[0] = tmp as u32;
-    tmp >>= 32;
-    tmp += num.data[1] as u64 * power;
-    num.set_mid64(tmp);
+    let val = num.data[0] as u128 | ((num.data[1] as u128) << 32);
+    let result = val * power as u128;
+    num.data[0] = result as u32;
+    num.data[1] = (result >> 32) as u32;
+    num.data[2] = (result >> 64) as u32;
+    // data[3] is left unchanged — it carries the overflow word set by the caller
 }
 
 /// Reverse a scale-up overflow by dividing by 10 and rounding.
