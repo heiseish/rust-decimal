@@ -2873,7 +2873,7 @@ fn it_converts_to_f64() {
     ];
     for &(value, expected) in tests {
         let value = Decimal::from_str(value).unwrap().to_f64();
-        assert_eq!(expected, value);
+        assert_eq!(expected, Some(value));
     }
 }
 

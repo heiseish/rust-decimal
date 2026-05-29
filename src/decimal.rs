@@ -1851,8 +1851,12 @@ macro_rules! impl_try_from_decimal {
     };
 }
 
+fn to_f64_try(t: &Decimal) -> Option<f64> {
+    Some(t.to_f64())
+}
+
 impl_try_from_decimal!(f32, Decimal::to_f32, integer_docs!(false));
-impl_try_from_decimal!(f64, Decimal::to_f64, integer_docs!(false));
+impl_try_from_decimal!(f64, to_f64_try, integer_docs!(false));
 impl_try_from_decimal!(isize, Decimal::to_isize, integer_docs!(true));
 impl_try_from_decimal!(i8, Decimal::to_i8, integer_docs!(true));
 impl_try_from_decimal!(i16, Decimal::to_i16, integer_docs!(true));
@@ -2356,27 +2360,66 @@ impl Decimal {
         Some((u128::from(d.hi) << 64) | (u128::from(d.mid) << 32) | u128::from(d.lo))
     }
 
-    pub fn to_f64(&self) -> Option<f64> {
-        if self.scale() == 0 {
-            // If scale is zero, we are storing a 96-bit integer value, that would
-            // always fit into i128, which in turn is always representable as f64,
-            // albeit with loss of precision for values outside of -2^53..2^53 range.
-            return self.to_i128().map(i128_to_f64);
-        }
-        let neg = self.is_sign_negative();
-        let mantissa = (self.lo as u128) | ((self.mid as u128) << 32) | ((self.hi as u128) << 64);
-        let scale = self.scale();
-        let precision = 10_u128.pow(scale);
-        let integral = (mantissa / precision) as f64;
-        let frac_f64 = (mantissa % precision) as f64 / precision as f64;
+    // ── fast Decimal → f64 ───────────────────────────────────────────────────────
+    //
+    // ── decimal_to_f64_fast: use POS_POW10 division, not NEG_POW10 multiplication ─
+    //
+    // The original bug: `mantissa * NEG_POW10[scale]` accumulates the representation
+    // error of 10^-scale, which is NOT exactly representable in f64 for any n > 0.
+    //
+    // The fix: `mantissa / POS_POW10[scale]`.
+    //
+    // Why division is more accurate:
+    //   10^n = 2^n × 5^n.  In an f64 mantissa (52 explicit bits), 5^n fits exactly
+    //   when n ≤ 22 (log₂(5²²) ≈ 51.1 bits).  So POS_POW10[0..=22] are exact
+    //   integers in f64 — the IEEE 754 division is then a single correctly-rounded
+    //   operation with no preliminary rounding error.
+    //
+    //   Multiplying by 10^-scale is always inexact (1/10^n is never a dyadic
+    //   rational), so it introduces up to 1 ULP of error before the outer rounding.
+    //
+    // For scales 23-28 neither approach is perfectly accurate, but financial data
+    // almost never exceeds scale 8 (satoshi = 8 dp for BTC).
 
-        if frac_f64 == 0.0 {
-            return Some(if neg { -integral } else { integral });
+    /// 10^n as an exactly-represented f64 for n = 0..=28.
+    /// Exactly representable for n ≤ 22 (5^n fits in 52-bit mantissa).
+    const POS_POW10: [f64; 29] = [
+        1.0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19,
+        1e20, 1e21, 1e22, 1e23, 1e24, 1e25, 1e26, 1e27, 1e28,
+    ];
+
+    pub const fn to_f64(&self) -> f64 {
+        let neg = self.is_sign_negative();
+        let mut scale = self.scale() as usize;
+
+        let value = if self.hi() == 0 {
+            // Fast path: mantissa fits in 64 bits (covers ~all real prices/sizes).
+            // Staying in u64 keeps the int->float cast on the SSE hardware path
+            // instead of the software routine __floattidf that a 128-bit cast forces.
+            let mut m = (self.mid() as u64) << 32 | self.lo() as u64;
+            // Strip trailing zeros so e.g. 100000 stored as 10^19/scale-14 collapses
+            // to 100000/1, killing the double-rounding (the 99999.99999999999 bug).
+            // `/10` and `%10` by a constant lower to reciprocal multiplies — cheap.
+            while scale > 0 && m % 10 == 0 {
+                m /= 10;
+                scale -= 1;
+            }
+            m as f64 / Self::POS_POW10[scale]
+        } else {
+            // Rare: a genuine > 64-bit mantissa. Keep the 128-bit cast here only.
+            let mut m = (self.hi() as i128) << 64 | (self.mid() as i128) << 32 | self.lo() as i128;
+            while scale > 0 && m % 10 == 0 {
+                m /= 10;
+                scale -= 1;
+            }
+            i128_to_f64(m) / Self::POS_POW10[scale]
+        };
+
+        if neg {
+            -value
+        } else {
+            value
         }
-        let value = integral + frac_f64;
-        let round_to = 10f64.powi(scale as i32);
-        let rounded = (value * round_to).round() / round_to;
-        Some(if neg { -rounded } else { rounded })
     }
 }
 
@@ -2402,7 +2445,7 @@ impl ToPrimitive for Decimal {
     }
 
     fn to_f64(&self) -> Option<f64> {
-        self.to_f64()
+        Some(self.to_f64())
     }
 }
 
