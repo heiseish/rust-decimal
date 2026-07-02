@@ -1,7 +1,6 @@
 use crate::Decimal;
 use alloc::string::ToString;
 use core::{fmt, str::FromStr};
-use num_traits::FromPrimitive;
 use serde::{self, de::Unexpected};
 
 /// Serialize/deserialize Decimals as arbitrary precision numbers in JSON using the `arbitrary_precision` feature within `serde_json`.

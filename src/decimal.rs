@@ -1,6 +1,6 @@
 use crate::constants::{
-    MAX_I128_REPR, MAX_SCALE_U32, MAX_STR_BUFFER_SIZE, POWERS_10, SCALE_MASK, SCALE_SHIFT, SIGN_MASK, SIGN_SHIFT,
-    U32_MASK, U8_MASK, UNSIGN_MASK,
+    MAX_I128_REPR, MAX_SCALE_U32, POWERS_10, SCALE_MASK, SCALE_SHIFT, SIGN_MASK, SIGN_SHIFT, U32_MASK, U8_MASK,
+    UNSIGN_MASK,
 };
 use crate::ops;
 use crate::Error;
@@ -1794,7 +1794,7 @@ impl Decimal {
     }
 }
 
-impl const Default for Decimal {
+const impl Default for Decimal {
     /// Returns the default value for a `Decimal` (equivalent to `Decimal::ZERO`). [Read more]
     ///
     /// [Read more]: core::default::Default#tymethod.default
@@ -1901,7 +1901,7 @@ macro_rules! impl_from {
         ///
         /// Conversion to `Decimal`.
         ///
-        impl const core::convert::From<$T> for Decimal {
+        const impl core::convert::From<$T> for Decimal {
             #[inline]
             fn from(t: $T) -> Self {
                 $from_ty(t as $TT).unwrap()
@@ -1997,7 +1997,7 @@ impl Num for Decimal {
     }
 }
 
-impl const FromStr for Decimal {
+const impl FromStr for Decimal {
     type Err = Error;
     #[inline]
     fn from_str(value: &str) -> Result<Decimal, Self::Err> {
@@ -2484,7 +2484,7 @@ impl fmt::UpperExp for Decimal {
 
 // ── Neg ───────────────────────────────────────────────────────────────────────
 
-impl const Neg for Decimal {
+const impl Neg for Decimal {
     type Output = Decimal;
     #[inline(always)]
     fn neg(self) -> Decimal {
@@ -2498,7 +2498,7 @@ impl const Neg for Decimal {
     }
 }
 
-impl const Neg for &Decimal {
+const impl Neg for &Decimal {
     type Output = Decimal;
     #[inline(always)]
     fn neg(self) -> Decimal {
@@ -2519,25 +2519,25 @@ impl const Neg for &Decimal {
 
 macro_rules! impl_assign_op {
     ($trait:ident, $method:ident, $op:ident) => {
-        impl const $trait for Decimal {
+        const impl $trait for Decimal {
             #[inline(always)]
             fn $method(&mut self, other: Decimal) {
                 *self = self.$op(other);
             }
         }
-        impl<'a> const $trait<&'a Decimal> for Decimal {
+        const impl<'a> $trait<&'a Decimal> for Decimal {
             #[inline(always)]
             fn $method(&mut self, other: &'a Decimal) {
                 *self = self.$op(*other);
             }
         }
-        impl const $trait<Decimal> for &mut Decimal {
+        const impl $trait<Decimal> for &mut Decimal {
             #[inline(always)]
             fn $method(&mut self, other: Decimal) {
                 **self = (**self).$op(other);
             }
         }
-        impl<'a> const $trait<&'a Decimal> for &'a mut Decimal {
+        const impl<'a> $trait<&'a Decimal> for &'a mut Decimal {
             #[inline(always)]
             fn $method(&mut self, other: &'a Decimal) {
                 **self = (**self).$op(*other);
@@ -2554,14 +2554,14 @@ impl_assign_op!(RemAssign, rem_assign, rem);
 
 // ── Equality, hashing, ordering ───────────────────────────────────────────────
 
-impl const PartialEq for Decimal {
+const impl PartialEq for Decimal {
     #[inline]
     fn eq(&self, other: &Decimal) -> bool {
         self.cmp(other) == Equal
     }
 }
 
-impl const Eq for Decimal {}
+const impl Eq for Decimal {}
 
 impl Hash for Decimal {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -2573,14 +2573,14 @@ impl Hash for Decimal {
     }
 }
 
-impl const PartialOrd for Decimal {
+const impl PartialOrd for Decimal {
     #[inline]
     fn partial_cmp(&self, other: &Decimal) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl const Ord for Decimal {
+const impl Ord for Decimal {
     #[inline]
     fn cmp(&self, other: &Decimal) -> Ordering {
         ops::cmp_impl(self, other)

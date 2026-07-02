@@ -5,7 +5,6 @@
 #![feature(const_convert)]
 #![feature(const_try)]
 #![feature(const_default)]
-#![feature(const_option_ops)]
 #![forbid(unsafe_code)]
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 #![cfg_attr(not(feature = "std"), no_std)]

@@ -116,7 +116,7 @@ macro_rules! forward_all_binop {
 
 macro_rules! forward_ref_val_binop {
     (impl $imp:ident for $res:ty, $method:ident) => {
-        impl<'a> const $imp<$res> for &'a $res {
+        const impl<'a> $imp<$res> for &'a $res {
             type Output = $res;
             #[inline(always)]
             fn $method(self, other: $res) -> $res {
@@ -128,7 +128,7 @@ macro_rules! forward_ref_val_binop {
 
 macro_rules! forward_val_ref_binop {
     (impl $imp:ident for $res:ty, $method:ident) => {
-        impl<'a> const $imp<&'a $res> for $res {
+        const impl<'a> $imp<&'a $res> for $res {
             type Output = $res;
             #[inline(always)]
             fn $method(self, other: &$res) -> $res {
@@ -140,7 +140,7 @@ macro_rules! forward_val_ref_binop {
 
 macro_rules! forward_val_val_binop {
     (impl $imp:ident for $res:ty, $method:ident) => {
-        impl const $imp<$res> for $res {
+        const impl $imp<$res> for $res {
             type Output = $res;
             #[inline(always)]
             fn $method(self, other: $res) -> $res {
@@ -153,7 +153,7 @@ macro_rules! forward_val_val_binop {
 // ── Arithmetic operator impls ─────────────────────────────────────────────────
 
 forward_all_binop!(impl Add for Decimal, add);
-impl const Add<&Decimal> for &Decimal {
+const impl Add<&Decimal> for &Decimal {
     type Output = Decimal;
     #[inline(always)]
     fn add(self, other: &Decimal) -> Decimal {
@@ -165,7 +165,7 @@ impl const Add<&Decimal> for &Decimal {
 }
 
 forward_all_binop!(impl Sub for Decimal, sub);
-impl const Sub<&Decimal> for &Decimal {
+const impl Sub<&Decimal> for &Decimal {
     type Output = Decimal;
     #[inline(always)]
     fn sub(self, other: &Decimal) -> Decimal {
@@ -177,7 +177,7 @@ impl const Sub<&Decimal> for &Decimal {
 }
 
 forward_all_binop!(impl Mul for Decimal, mul);
-impl const Mul<&Decimal> for &Decimal {
+const impl Mul<&Decimal> for &Decimal {
     type Output = Decimal;
     #[inline(always)]
     fn mul(self, other: &Decimal) -> Decimal {
@@ -189,7 +189,7 @@ impl const Mul<&Decimal> for &Decimal {
 }
 
 forward_all_binop!(impl Div for Decimal, div);
-impl const Div<&Decimal> for &Decimal {
+const impl Div<&Decimal> for &Decimal {
     type Output = Decimal;
     #[inline(always)]
     fn div(self, other: &Decimal) -> Decimal {
@@ -202,7 +202,7 @@ impl const Div<&Decimal> for &Decimal {
 }
 
 forward_all_binop!(impl Rem for Decimal, rem);
-impl const Rem<&Decimal> for &Decimal {
+const impl Rem<&Decimal> for &Decimal {
     type Output = Decimal;
     #[inline(always)]
     fn rem(self, other: &Decimal) -> Decimal {

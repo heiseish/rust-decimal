@@ -1,9 +1,8 @@
 //! See how `rust-decimal` performs compared to native floating numbers.
 
-use criterion::{
-    black_box, criterion_group, criterion_main, measurement::Measurement, BenchmarkGroup, BenchmarkId, Criterion,
-};
+use criterion::{criterion_group, criterion_main, measurement::Measurement, BenchmarkGroup, BenchmarkId, Criterion};
 use rust_decimal::Decimal;
+use std::hint::black_box;
 
 const DECIMAL_2_01: Decimal = Decimal::from_parts(201, 0, 0, false, 2);
 const DECIMAL_13_7: Decimal = Decimal::from_parts(137, 0, 0, false, 1);

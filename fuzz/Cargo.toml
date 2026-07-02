@@ -11,7 +11,7 @@ path = "fuzz_targets/constructors.rs"
 test = false
 
 [dependencies]
-arbitrary = { features = ["derive"], version = "1.0" }
+arbitrary = { features = ["derive"], version = "1" }
 libfuzzer-sys = "0.4"
 rust_decimal = { features = ["maths", "rust-fuzz"], path = ".." }
 serde_json = { default-features = false, features = ["alloc"], version = "1.0" }
