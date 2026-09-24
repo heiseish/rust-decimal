@@ -2514,6 +2514,13 @@ impl Decimal {
             }
         }
     }
+
+    /// Converts this `Decimal` to an `f32`.
+    ///
+    /// This is the infallible equivalent of [`ToPrimitive::to_f32`].
+    pub fn as_f32(&self) -> f32 {
+        self.as_f64() as f32
+    }
 }
 
 impl ToPrimitive for Decimal {
@@ -2569,6 +2576,10 @@ impl ToPrimitive for Decimal {
 
         let d = self.trunc();
         Some((u128::from(d.hi) << 64) | (u128::from(d.mid) << 32) | u128::from(d.lo))
+    }
+
+    fn to_f32(&self) -> Option<f32> {
+        Some(self.as_f32())
     }
 
     fn to_f64(&self) -> Option<f64> {
