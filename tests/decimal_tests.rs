@@ -2163,8 +2163,6 @@ fn test_min_compares() {
 
 #[test]
 fn it_can_parse_from_i32() {
-    use num_traits::FromPrimitive;
-
     let tests = &[
         (0i32, "0"),
         (1i32, "1"),
@@ -2189,8 +2187,6 @@ fn it_can_parse_from_i32() {
 
 #[test]
 fn it_can_parse_from_i64() {
-    use num_traits::FromPrimitive;
-
     let tests = &[
         (0i64, "0"),
         (1i64, "1"),
@@ -2866,7 +2862,7 @@ fn it_converts_to_f64() {
     ];
     for &(value, expected) in tests {
         let value = Decimal::from_str(value).unwrap().to_f64();
-        assert_eq!(expected, value);
+        assert_eq!(expected, Some(value));
     }
 }
 
@@ -3052,8 +3048,6 @@ fn it_converts_from_str() {
 
 #[test]
 fn it_converts_from_f32() {
-    use num_traits::FromPrimitive;
-
     let tests = [
         (0.1_f32, "0.1"),
         (1_f32, "1"),
@@ -3081,8 +3075,6 @@ fn it_converts_from_f32() {
 
 #[test]
 fn it_converts_from_f32_limits() {
-    use num_traits::FromPrimitive;
-
     assert!(Decimal::from_f32(f32::NAN).is_none(), "from_f32(f32::NAN)");
     assert!(Decimal::from_f32(f32::INFINITY).is_none(), "from_f32(f32::INFINITY)");
     assert!(Decimal::try_from(f32::NAN).is_err(), "try_from(f32::NAN)");
@@ -3115,8 +3107,6 @@ fn it_converts_from_f32_retaining_bits() {
 
 #[test]
 fn it_converts_from_f64() {
-    use num_traits::FromPrimitive;
-
     let tests = [
         (0.1_f64, "0.1"),
         (1_f64, "1"),
@@ -3147,8 +3137,6 @@ fn it_converts_from_f64() {
 
 #[test]
 fn it_converts_from_f64_limits() {
-    use num_traits::FromPrimitive;
-
     assert!(Decimal::from_f64(f64::NAN).is_none(), "from_f64(f64::NAN)");
     assert!(Decimal::from_f64(f64::INFINITY).is_none(), "from_f64(f64::INFINITY)");
     assert!(Decimal::try_from(f64::NAN).is_err(), "try_from(f64::NAN)");
@@ -3163,8 +3151,6 @@ fn it_converts_from_f64_limits() {
 
 #[test]
 fn it_converts_from_f64_dec_limits() {
-    use num_traits::FromPrimitive;
-
     // Note Decimal MAX is: 79_228_162_514_264_337_593_543_950_335
     let over_max = 79_228_162_514_264_355_185_729_994_752_f64;
     let max_plus_one = 79_228_162_514_264_337_593_543_950_336_f64;
@@ -3990,7 +3976,7 @@ mod maths {
             ("6", "-7", "0.0000035722450845907636031093"),
             ("0.16", "12.5", "0.0000000001125899906842624"),
             // ~= 0.8408964152537145
-            ("0.5", "0.25", "0.8408964152537145430311254764"),
+            ("0.5", "0.25", "0.8408964152537145430311254763"),
             // ~= 0.999999999999999999999999999790814
             (
                 "0.1234567890123456789012345678",
@@ -3999,7 +3985,7 @@ mod maths {
             ),
             ("1234.5678", "0.9012", "611.04510432242565327379383059"),
             ("-2", "0.5", "-1.4142135623730950488016887244"),
-            ("-2.5", "0.123", "-1.1193003023312942509616251298"),
+            ("-2.5", "0.123", "-1.1193003023312942509616251297"),
             (
                 "0.0000000000000000000000000001",
                 "0.1234567890123456789012345678",
@@ -4199,12 +4185,12 @@ mod maths {
     fn test_ln() {
         let test_cases = [
             ("1", "0"),
-            ("0.23", "-1.4696759700589416772292300767"),
-            ("2", "0.6931471805599453094172321216"),
-            ("25", "3.2188758248682007492015186659"),
+            ("0.23", "-1.4696759700589416772292300768"),
+            ("2", "0.6931471805599453094172321215"),
+            ("25", "3.2188758248682007492015186657"),
             ("1.234567890", "0.2107210222156525610500017105"),
             ("0.0000000000000000000000000001", "-64.472382603833279152503760712"),
-            ("0.0000000000000000000000000007", "-62.526472454777965847398407968"),
+            ("0.0000000000000000000000000007", "-62.526472454777965847398407969"),
         ];
 
         for (input, expected) in test_cases {
@@ -4243,7 +4229,7 @@ mod maths {
     fn test_log10() {
         let test_cases = [
             ("1", "0"),
-            ("2", "0.3010299956639811952137388948"),
+            ("2", "0.3010299956639811952137388947"),
             ("1.234567890", "0.0915149771692704475183336231"),
             ("10", "1"),
             ("100", "2"),

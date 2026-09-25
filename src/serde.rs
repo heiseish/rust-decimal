@@ -1,7 +1,6 @@
 use crate::Decimal;
 use alloc::string::ToString;
 use core::{fmt, str::FromStr};
-use num_traits::FromPrimitive;
 use serde::{self, de::Unexpected};
 
 /// Serialize/deserialize Decimals as arbitrary precision numbers in JSON using the `arbitrary_precision` feature within `serde_json`.
@@ -130,8 +129,7 @@ pub mod float {
     where
         S: serde::Serializer,
     {
-        use num_traits::ToPrimitive;
-        value.to_f64().unwrap().serialize(serializer)
+        value.as_f64().serialize(serializer)
     }
 }
 
@@ -177,10 +175,7 @@ pub mod float_option {
         S: serde::Serializer,
     {
         match *value {
-            Some(ref decimal) => {
-                use num_traits::ToPrimitive;
-                decimal.to_f64().unwrap().serialize(serializer)
-            }
+            Some(ref decimal) => decimal.as_f64().serialize(serializer),
             None => serializer.serialize_none(),
         }
     }
@@ -547,8 +542,7 @@ impl serde::Serialize for Decimal {
     where
         S: serde::Serializer,
     {
-        use num_traits::ToPrimitive;
-        serializer.serialize_f64(self.to_f64().unwrap())
+        serializer.serialize_f64(self.as_f64())
     }
 }
 

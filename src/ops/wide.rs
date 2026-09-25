@@ -745,11 +745,92 @@ pub(crate) fn exp_wide(value: &Decimal) -> Option<Decimal> {
 // ln(10) = 2.302585092994045684017991454 (scale 27)
 const LN10: Decimal = Decimal::from_parts_raw(267849502, 33690064, 124823388, 1769472);
 
+// E_NEG_SIXTEENTHS[j] ~= e^(-j/16) at scale 28; LN_E_NEG_SIXTEENTHS[j] = -ln(E_NEG_SIXTEENTHS[j]) exactly rounded.
+const E_NEG_SIXTEENTHS: [Decimal; 38] = [
+    Decimal::from_parts(0x10000000, 0x3e250261, 0x204fce5e, false, 28),
+    Decimal::from_parts(0x2fe85416, 0xc825189f, 0x1e5aa489, false, 28),
+    Decimal::from_parts(0x7a51f958, 0x7f39a6fd, 0x1c83d7e1, false, 28),
+    Decimal::from_parts(0x2fa73635, 0x7e1240e5, 0x1ac99171, false, 28),
+    Decimal::from_parts(0xe76938e, 0x783f377e, 0x192a16ce, false, 28),
+    Decimal::from_parts(0x46ecf1dd, 0x2a05a8ff, 0x17a3c85b, false, 28),
+    Decimal::from_parts(0x91271e5f, 0x98782dec, 0x16351fa8, false, 28),
+    Decimal::from_parts(0xb25b4fc1, 0x81f19671, 0x14dcadef, false, 28),
+    Decimal::from_parts(0x4677db56, 0x7841a58e, 0x13991aa1, false, 28),
+    Decimal::from_parts(0x1d3e4c42, 0x358762a1, 0x12692210, false, 28),
+    Decimal::from_parts(0xca4f66b8, 0xd2f121c1, 0x114b9429, false, 28),
+    Decimal::from_parts(0x7ed637a2, 0x9d7e069a, 0x103f5348, false, 28),
+    Decimal::from_parts(0xd6c8a765, 0x587c697c, 0xf435315, false, 28),
+    Decimal::from_parts(0xac93ba2c, 0xcfefcc80, 0xe56977a, false, 28),
+    Decimal::from_parts(0xabdccb2f, 0xae5a676b, 0xd7833a9, false, 28),
+    Decimal::from_parts(0xacd240e5, 0x99ab0fb5, 0xca7492b, false, 28),
+    Decimal::from_parts(0x8e19db46, 0xaa58ac52, 0xbe30704, false, 28),
+    Decimal::from_parts(0xb428261a, 0x5e0fc4ae, 0xb2aa8e2, false, 28),
+    Decimal::from_parts(0xa055561f, 0x34d36c11, 0xa7d7657, false, 28),
+    Decimal::from_parts(0xc1b60e87, 0x341e4c33, 0x9dac222, false, 28),
+    Decimal::from_parts(0xa31964fa, 0x97778fd1, 0x941e981, false, 28),
+    Decimal::from_parts(0xdc88f671, 0x11dd062, 0x8b25390, false, 28),
+    Decimal::from_parts(0x9facf336, 0x87eb2027, 0x82b70ab, false, 28),
+    Decimal::from_parts(0x7def0ab5, 0x9735552, 0x7acb9e6, false, 28),
+    Decimal::from_parts(0x3fe6dc64, 0x30a2bb0b, 0x735b07e, false, 28),
+    Decimal::from_parts(0xd5093e0, 0xa9d88729, 0x6c5dd60, false, 28),
+    Decimal::from_parts(0xa7fbc615, 0x5a69dc1, 0x65cd0b1, false, 28),
+    Decimal::from_parts(0xe39f45dc, 0xd30f74e1, 0x5fa2159, false, 28),
+    Decimal::from_parts(0xfcf18deb, 0x815302dd, 0x59d6ca3, false, 28),
+    Decimal::from_parts(0x1d697e3f, 0xa023c159, 0x54655d1, false, 28),
+    Decimal::from_parts(0x996ceb6e, 0x1b7bbf1a, 0x4f485c6, false, 28),
+    Decimal::from_parts(0x318eb678, 0x1645da7d, 0x4a7aaaa, false, 28),
+    Decimal::from_parts(0x3c206b46, 0xcae8a58, 0x45f779c, false, 28),
+    Decimal::from_parts(0x236191d1, 0xec37b378, 0x41ba462, false, 28),
+    Decimal::from_parts(0xfbf8a744, 0xd4a1359b, 0x3dbed25, false, 28),
+    Decimal::from_parts(0xdc10796f, 0x3961130f, 0x3a01228, false, 28),
+    Decimal::from_parts(0xa1fdc8fc, 0x1fc702fa, 0x367d78a, false, 28),
+    Decimal::from_parts(0x6ced981f, 0x3a04419c, 0x333050c, false, 28),
+];
+const LN_E_NEG_SIXTEENTHS: [Decimal; 38] = [
+    Decimal::from_parts(0x0, 0x0, 0x0, false, 28),
+    Decimal::from_parts(0x11000000, 0xe3e25026, 0x204fce5, false, 28),
+    Decimal::from_parts(0x22000000, 0xc7c4a04c, 0x409f9cb, false, 28),
+    Decimal::from_parts(0x33000001, 0xaba6f072, 0x60ef6b1, false, 28),
+    Decimal::from_parts(0x44000000, 0x8f894098, 0x813f397, false, 28),
+    Decimal::from_parts(0x55000000, 0x736b90be, 0xa18f07d, false, 28),
+    Decimal::from_parts(0x66000001, 0x574de0e4, 0xc1ded63, false, 28),
+    Decimal::from_parts(0x76ffffff, 0x3b30310a, 0xe22ea49, false, 28),
+    Decimal::from_parts(0x88000000, 0x1f128130, 0x1027e72f, false, 28),
+    Decimal::from_parts(0x99000001, 0x2f4d156, 0x122ce415, false, 28),
+    Decimal::from_parts(0xaa000000, 0xe6d7217c, 0x1431e0fa, false, 28),
+    Decimal::from_parts(0xbb000001, 0xcab971a2, 0x1636dde0, false, 28),
+    Decimal::from_parts(0xcc000001, 0xae9bc1c8, 0x183bdac6, false, 28),
+    Decimal::from_parts(0xdd000000, 0x927e11ee, 0x1a40d7ac, false, 28),
+    Decimal::from_parts(0xee000001, 0x76606214, 0x1c45d492, false, 28),
+    Decimal::from_parts(0xfeffffff, 0x5a42b23a, 0x1e4ad178, false, 28),
+    Decimal::from_parts(0xfffffff, 0x3e250261, 0x204fce5e, false, 28),
+    Decimal::from_parts(0x21000000, 0x22075287, 0x2254cb44, false, 28),
+    Decimal::from_parts(0x31ffffff, 0x5e9a2ad, 0x2459c82a, false, 28),
+    Decimal::from_parts(0x43000001, 0xe9cbf2d3, 0x265ec50f, false, 28),
+    Decimal::from_parts(0x54000002, 0xcdae42f9, 0x2863c1f5, false, 28),
+    Decimal::from_parts(0x65000000, 0xb190931f, 0x2a68bedb, false, 28),
+    Decimal::from_parts(0x76000001, 0x9572e345, 0x2c6dbbc1, false, 28),
+    Decimal::from_parts(0x87000001, 0x7955336b, 0x2e72b8a7, false, 28),
+    Decimal::from_parts(0x97fffffe, 0x5d378391, 0x3077b58d, false, 28),
+    Decimal::from_parts(0xa8ffffff, 0x4119d3b7, 0x327cb273, false, 28),
+    Decimal::from_parts(0xba000000, 0x24fc23dd, 0x3481af59, false, 28),
+    Decimal::from_parts(0xcb000001, 0x8de7403, 0x3686ac3f, false, 28),
+    Decimal::from_parts(0xdbfffffe, 0xecc0c429, 0x388ba924, false, 28),
+    Decimal::from_parts(0xecfffffe, 0xd0a3144f, 0x3a90a60a, false, 28),
+    Decimal::from_parts(0xfe000001, 0xb4856475, 0x3c95a2f0, false, 28),
+    Decimal::from_parts(0xf000002, 0x9867b49c, 0x3e9a9fd6, false, 28),
+    Decimal::from_parts(0x1ffffffe, 0x7c4a04c2, 0x409f9cbc, false, 28),
+    Decimal::from_parts(0x30fffffe, 0x602c54e8, 0x42a499a2, false, 28),
+    Decimal::from_parts(0x42000001, 0x440ea50e, 0x44a99688, false, 28),
+    Decimal::from_parts(0x53000004, 0x27f0f534, 0x46ae936e, false, 28),
+    Decimal::from_parts(0x64000004, 0xbd3455a, 0x48b39054, false, 28),
+    Decimal::from_parts(0x75000004, 0xefb59580, 0x4ab88d39, false, 28),
+];
+
 /// Compute ln(x) using 192-bit intermediate precision.
 ///
-/// Uses range reduction (multiply/divide by e), then the atanh series:
-/// ln(x) = 2 * atanh((x-1)/(x+1)) where atanh(z) = z + z³/3 + z⁵/5 + ...
-/// This converges much faster than the standard ln(1+t) series.
+/// Reduces exactly by a power of ten, then by a tabulated e^(-j/16) so the atanh series
+/// ln(z) = 2 * atanh((z-1)/(z+1)) only needs a handful of terms.
 pub(crate) fn ln_wide(value: &Decimal) -> Option<Decimal> {
     if value.is_sign_negative() || value.is_zero() {
         return None;
@@ -758,85 +839,56 @@ pub(crate) fn ln_wide(value: &Decimal) -> Option<Decimal> {
         return Some(Decimal::ZERO);
     }
 
-    // Exact power-of-10 range reduction: write value = x * 10^k with x ∈ [1, 10).
-    // This is exact for Decimal (just adjusting the scale), avoiding the compounding
-    // rounding errors that occur when multiplying tiny values by E repeatedly.
-    let mut x = *value;
-    let mut k: i32 = 0;
-    while x < Decimal::ONE {
-        x *= Decimal::TEN;
-        k -= 1;
-    }
-    while x >= Decimal::TEN {
-        x /= Decimal::TEN;
-        k += 1;
-    }
-
-    // Special case: x == 1 means value was an exact power of 10
-    if x == Decimal::ONE {
-        let mut out = Decimal::new(k as i64, 0).checked_mul(LN10)?;
-        out.normalize_assign();
-        return Some(out);
-    }
-
-    // e-based reduction to get x into (e^-1, 1] (at most ~3 steps from [1, 10))
-    let mut count: i32 = 0;
-    while x >= Decimal::ONE {
-        x *= Decimal::E_INVERSE;
-        count += 1;
-    }
-    while x <= Decimal::E_INVERSE {
-        x *= Decimal::E;
-        count -= 1;
-    }
-
-    // x is in (e^-1, 1], compute z = (x-1)/(x+1) in wide precision
-    let x_wide = DecWide::from_decimal(&x);
-    let one_wide = DecWide::one();
-    let x_minus_1 = x_wide.checked_sub_impl(&one_wide, false)?;
-    if x_minus_1.is_zero() {
-        return Some(Decimal::new(count as i64, 0));
-    }
-    let x_plus_1 = x_wide.checked_add(&one_wide)?;
-
-    // z = (x-1)/(x+1): compute via wide division (multiply by reciprocal approximation)
-    // Since we don't have wide division, convert to Decimal for this one division
-    let x_m1_dec = x_minus_1.to_decimal()?;
-    let x_p1_dec = x_plus_1.to_decimal()?;
-    let z_dec = x_m1_dec.checked_div(x_p1_dec)?;
-
-    let z = DecWide::from_decimal(&z_dec);
-    let z2 = z.checked_mul(&z)?;
-
-    // atanh(z) = z + z³/3 + z⁵/5 + z⁷/7 + ...
-    let mut result = z.clone();
-    let mut term = z;
-
-    for n in 1..100u32 {
-        let denom = 2 * n + 1;
-        term = term.checked_mul(&z2)?;
-        let contribution = term.checked_div_u32(denom)?;
-        result = result.checked_add(&contribution)?;
-
-        if contribution.magnitude_le_28() {
-            break;
-        }
-    }
-
-    // ln(x) = 2 * atanh(z)
-    let two = DecWide::from_decimal(&Decimal::TWO);
-    let ln_x = two.checked_mul(&result)?;
-
-    // ln(value) = k*ln(10) + count + ln(x)
-    let ln_fractional = ln_x.to_decimal()?;
+    // value = x * 10^k with x in [1, 10); exact, only the scale changes.
+    let mantissa = value.mantissa().unsigned_abs();
+    let digits = mantissa.ilog10();
+    let k = digits as i32 - value.scale() as i32;
+    let x = Decimal::from_i128_with_scale(mantissa as i128, digits);
     let k_ln10 = if k != 0 {
         Decimal::new(k as i64, 0).checked_mul(LN10)?
     } else {
         Decimal::ZERO
     };
-    let mut out = k_ln10
-        .checked_add(Decimal::new(count as i64, 0))?
-        .checked_add(ln_fractional)?;
+    if x == Decimal::ONE {
+        let mut out = k_ln10;
+        out.normalize_assign();
+        return Some(out);
+    }
+
+    // z = x * e^(-j/16) with j ~= 16 ln(x), so |z - 1| < 1/31.
+    let j = ((x.as_f64().ln() * 16.0).round() as usize).min(E_NEG_SIXTEENTHS.len() - 1);
+    let z = x.checked_mul(E_NEG_SIXTEENTHS[j])?;
+    let ln_table = LN_E_NEG_SIXTEENTHS[j];
+
+    let z_wide = DecWide::from_decimal(&z);
+    let one_wide = DecWide::one();
+    let z_minus_1 = z_wide.checked_sub_impl(&one_wide, false)?;
+    let ln_z = if z_minus_1.is_zero() {
+        Decimal::ZERO
+    } else {
+        let z_plus_1 = z_wide.checked_add(&one_wide)?;
+        // There is no wide division, so the one division happens in Decimal.
+        let y_dec = z_minus_1.to_decimal()?.checked_div(z_plus_1.to_decimal()?)?;
+        let y = DecWide::from_decimal(&y_dec);
+        let y2 = y.checked_mul(&y)?;
+
+        // atanh(y) = y + y³/3 + y⁵/5 + ...
+        let mut result = y.clone();
+        let mut term = y;
+        for n in 1..100u32 {
+            term = term.checked_mul(&y2)?;
+            let contribution = term.checked_div_u32(2 * n + 1)?;
+            result = result.checked_add(&contribution)?;
+            if contribution.magnitude_le_28() {
+                break;
+            }
+        }
+        DecWide::from_decimal(&Decimal::TWO)
+            .checked_mul(&result)?
+            .to_decimal()?
+    };
+
+    let mut out = k_ln10.checked_add(ln_table)?.checked_add(ln_z)?;
     out.normalize_assign();
     Some(out)
 }

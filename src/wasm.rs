@@ -1,7 +1,6 @@
 use alloc::string::String;
 use core::str::FromStr;
 
-use num_traits::{FromPrimitive, ToPrimitive};
 use wasm_bindgen::prelude::*;
 
 use crate::Decimal;
@@ -35,7 +34,7 @@ impl Decimal {
     #[wasm_bindgen(js_name = toNumber)]
     #[must_use]
     pub fn to_number(&self) -> f64 {
-        self.to_f64().unwrap_or(f64::NAN)
+        self.as_f64()
     }
 
     /// Returns the string representation of this `Decimal`.

@@ -1,6 +1,6 @@
 use crate::constants::{
-    MAX_I128_REPR, MAX_SCALE_U32, POWERS_10, SCALE_MASK, SCALE_SHIFT, SIGN_MASK, SIGN_SHIFT, U32_MASK, U8_MASK,
-    UNSIGN_MASK,
+    BIG_POWERS_10, MAX_I128_REPR, MAX_SCALE_U32, POWERS_10, SCALE_MASK, SCALE_SHIFT, SIGN_MASK, SIGN_SHIFT, U32_MASK,
+    U8_MASK, UNSIGN_MASK,
 };
 use crate::ops;
 use crate::Error;
@@ -1211,6 +1211,21 @@ impl Decimal {
     /// ```
     #[must_use]
     pub fn trunc(&self) -> Decimal {
+        if self.hi == 0 {
+            let scale = self.scale() as usize;
+            let m = ((self.mid as u64) << 32) | self.lo as u64;
+            let q = match scale {
+                0 => m,
+                1..=19 => m / BIG_POWERS_10[scale - 1],
+                _ => 0,
+            };
+            return Decimal {
+                lo: q as u32,
+                mid: (q >> 32) as u32,
+                hi: 0,
+                flags: flags(self.is_sign_negative(), 0),
+            };
+        }
         let mut working = [self.lo, self.mid, self.hi];
         let mut working_scale = self.scale();
         ops::array::truncate_internal(&mut working, &mut working_scale, 0);
@@ -1281,10 +1296,11 @@ impl Decimal {
     /// assert_eq!(num.abs().to_string(), "3.141");
     /// ```
     #[must_use]
-    pub fn abs(&self) -> Decimal {
-        let mut me = *self;
-        me.set_sign_positive(true);
-        me
+    pub const fn abs(&self) -> Decimal {
+        Decimal {
+            flags: self.flags & UNSIGN_MASK,
+            ..*self
+        }
     }
 
     /// Returns the largest integer less than or equal to a number.
@@ -1518,9 +1534,21 @@ impl Decimal {
             };
         }
 
+        let negative = self.is_sign_negative();
+        let diff = old_scale - dp;
+        if self.hi == 0 && diff <= 19 {
+            let m = ((self.mid as u64) << 32) | self.lo as u64;
+            let p = BIG_POWERS_10[diff as usize - 1];
+            let mut q = m / p;
+            let r = m - q * p;
+            if round_away(strategy, r.cmp(&(p / 2)), q & 1 == 1, r == 0, negative) {
+                q += 1;
+            }
+            return Decimal::from_parts(q as u32, (q >> 32) as u32, 0, negative, dp);
+        }
+
         let mut value = [self.lo, self.mid, self.hi];
         let mut value_scale = self.scale();
-        let negative = self.is_sign_negative();
 
         value_scale -= dp;
 
@@ -1580,55 +1608,14 @@ impl Decimal {
         }
         let order = ops::array::cmp_internal(&decimal_portion, &cap);
 
-        #[allow(deprecated)]
-        match strategy {
-            RoundingStrategy::BankersRounding | RoundingStrategy::MidpointNearestEven => {
-                match order {
-                    Ordering::Equal if (value[0] & 1) == 1 => {
-                        ops::array::add_one_internal(&mut value);
-                    }
-                    Ordering::Greater => {
-                        // Doesn't matter about the decimal portion
-                        ops::array::add_one_internal(&mut value);
-                    }
-                    _ => {}
-                }
-            }
-            RoundingStrategy::RoundHalfDown | RoundingStrategy::MidpointTowardZero => {
-                if let Ordering::Greater = order {
-                    ops::array::add_one_internal(&mut value);
-                }
-            }
-            RoundingStrategy::RoundHalfUp | RoundingStrategy::MidpointAwayFromZero => {
-                // when Ordering::Equal, decimal_portion is 0.5 exactly
-                // when Ordering::Greater, decimal_portion is > 0.5
-                match order {
-                    Ordering::Equal => {
-                        ops::array::add_one_internal(&mut value);
-                    }
-                    Ordering::Greater => {
-                        // Doesn't matter about the decimal portion
-                        ops::array::add_one_internal(&mut value);
-                    }
-                    _ => {}
-                }
-            }
-            RoundingStrategy::RoundUp | RoundingStrategy::AwayFromZero => {
-                if !ops::array::is_all_zero(&decimal_portion) {
-                    ops::array::add_one_internal(&mut value);
-                }
-            }
-            RoundingStrategy::ToPositiveInfinity => {
-                if !negative && !ops::array::is_all_zero(&decimal_portion) {
-                    ops::array::add_one_internal(&mut value);
-                }
-            }
-            RoundingStrategy::ToNegativeInfinity => {
-                if negative && !ops::array::is_all_zero(&decimal_portion) {
-                    ops::array::add_one_internal(&mut value);
-                }
-            }
-            RoundingStrategy::RoundDown | RoundingStrategy::ToZero => (),
+        if round_away(
+            strategy,
+            order,
+            (value[0] & 1) == 1,
+            ops::array::is_all_zero(&decimal_portion),
+            negative,
+        ) {
+            ops::array::add_one_internal(&mut value);
         }
 
         Decimal::from_parts(value[0], value[1], value[2], negative, dp)
@@ -1940,6 +1927,24 @@ pub(crate) enum CalculationResult {
     DivByZero,
 }
 
+/// Whether rounding away the discarded fraction bumps the kept magnitude by one.
+/// `order` compares the fraction to one half; `odd` is the parity of the kept value.
+#[inline]
+fn round_away(strategy: RoundingStrategy, order: Ordering, odd: bool, frac_zero: bool, negative: bool) -> bool {
+    #[allow(deprecated)]
+    match strategy {
+        RoundingStrategy::BankersRounding | RoundingStrategy::MidpointNearestEven => {
+            order == Ordering::Greater || (order == Ordering::Equal && odd)
+        }
+        RoundingStrategy::RoundHalfDown | RoundingStrategy::MidpointTowardZero => order == Ordering::Greater,
+        RoundingStrategy::RoundHalfUp | RoundingStrategy::MidpointAwayFromZero => order != Ordering::Less,
+        RoundingStrategy::RoundUp | RoundingStrategy::AwayFromZero => !frac_zero,
+        RoundingStrategy::ToPositiveInfinity => !negative && !frac_zero,
+        RoundingStrategy::ToNegativeInfinity => negative && !frac_zero,
+        RoundingStrategy::RoundDown | RoundingStrategy::ToZero => false,
+    }
+}
+
 #[inline(always)]
 pub(crate) const fn flags(neg: bool, scale: u32) -> u32 {
     (scale << SCALE_SHIFT) | ((neg as u32) << SIGN_SHIFT)
@@ -1979,8 +1984,12 @@ macro_rules! impl_try_from_decimal {
     };
 }
 
+fn to_f64_try(t: &Decimal) -> Option<f64> {
+    Some(t.as_f64())
+}
+
 impl_try_from_decimal!(f32, Decimal::to_f32, integer_docs!(false));
-impl_try_from_decimal!(f64, Decimal::to_f64, integer_docs!(false));
+impl_try_from_decimal!(f64, to_f64_try, integer_docs!(false));
 impl_try_from_decimal!(isize, Decimal::to_isize, integer_docs!(true));
 impl_try_from_decimal!(i8, Decimal::to_i8, integer_docs!(true));
 impl_try_from_decimal!(i16, Decimal::to_i16, integer_docs!(true));
@@ -2063,12 +2072,9 @@ impl One for Decimal {
     }
 }
 
-impl Signed for Decimal {
-    fn abs(&self) -> Self {
-        self.abs()
-    }
-
-    fn abs_sub(&self, other: &Self) -> Self {
+impl Decimal {
+    #[inline]
+    pub fn abs_sub(&self, other: &Self) -> Self {
         if self <= other {
             ZERO
         } else {
@@ -2076,16 +2082,32 @@ impl Signed for Decimal {
         }
     }
 
-    fn signum(&self) -> Self {
+    #[inline]
+    pub const fn signum(&self) -> Self {
         if self.is_zero() {
             ZERO
         } else {
-            let mut value = ONE;
-            if self.is_sign_negative() {
-                value.set_sign_negative(true);
+            Decimal {
+                flags: self.flags & SIGN_MASK,
+                lo: 1,
+                mid: 0,
+                hi: 0,
             }
-            value
         }
+    }
+}
+
+impl Signed for Decimal {
+    fn abs(&self) -> Self {
+        self.abs()
+    }
+
+    fn abs_sub(&self, other: &Self) -> Self {
+        Self::abs_sub(self, other)
+    }
+
+    fn signum(&self) -> Self {
+        Self::signum(self)
     }
 
     fn is_positive(&self) -> bool {
@@ -2112,14 +2134,24 @@ impl FromStr for Decimal {
     fn from_str(value: &str) -> Result<Decimal, Self::Err> {
         match crate::str::parse_str_radix_10(value) {
             Ok(d) => Ok(d),
-            Err(_) if value.as_bytes().iter().any(|&b| b == b'e' || b == b'E') => Decimal::from_scientific_lossy(value),
-            Err(e) => Err(e),
+            Err(e) => from_str_err(value, e),
         }
     }
 }
 
-impl FromPrimitive for Decimal {
-    fn from_i32(n: i32) -> Option<Decimal> {
+#[cold]
+#[inline(never)]
+fn from_str_err(value: &str, e: Error) -> Result<Decimal, Error> {
+    if value.as_bytes().iter().any(|&b| b == b'e' || b == b'E') {
+        Decimal::from_scientific_lossy(value)
+    } else {
+        Err(e)
+    }
+}
+
+impl Decimal {
+    #[inline]
+    pub fn from_i32(n: i32) -> Option<Decimal> {
         let flags: u32;
         let value_copy: i64;
         if n >= 0 {
@@ -2137,7 +2169,8 @@ impl FromPrimitive for Decimal {
         })
     }
 
-    fn from_i64(n: i64) -> Option<Decimal> {
+    #[inline]
+    pub fn from_i64(n: i64) -> Option<Decimal> {
         let flags: u32;
         let value_copy: i128;
         if n >= 0 {
@@ -2155,7 +2188,8 @@ impl FromPrimitive for Decimal {
         })
     }
 
-    fn from_i128(n: i128) -> Option<Decimal> {
+    #[inline]
+    pub fn from_i128(n: i128) -> Option<Decimal> {
         let flags;
         let unsigned;
         if n >= 0 {
@@ -2177,7 +2211,8 @@ impl FromPrimitive for Decimal {
         })
     }
 
-    fn from_u32(n: u32) -> Option<Decimal> {
+    #[inline]
+    pub fn from_u32(n: u32) -> Option<Decimal> {
         Some(Decimal {
             flags: 0,
             lo: n,
@@ -2186,7 +2221,8 @@ impl FromPrimitive for Decimal {
         })
     }
 
-    fn from_u64(n: u64) -> Option<Decimal> {
+    #[inline]
+    pub fn from_u64(n: u64) -> Option<Decimal> {
         Some(Decimal {
             flags: 0,
             lo: n as u32,
@@ -2195,7 +2231,8 @@ impl FromPrimitive for Decimal {
         })
     }
 
-    fn from_u128(n: u128) -> Option<Decimal> {
+    #[inline]
+    pub fn from_u128(n: u128) -> Option<Decimal> {
         // Check if we overflow
         if n >> 96 != 0 {
             return None;
@@ -2208,14 +2245,58 @@ impl FromPrimitive for Decimal {
         })
     }
 
-    fn from_f32(n: f32) -> Option<Decimal> {
+    #[inline]
+    pub fn from_f32(n: f32) -> Option<Decimal> {
         // By default, we remove excess bits. This allows 0.1_f64 == dec!(0.1).
         from_f32(n, true)
     }
 
-    fn from_f64(n: f64) -> Option<Decimal> {
+    #[inline]
+    pub fn from_f64(n: f64) -> Option<Decimal> {
         // By default, we remove excess bits. This allows 0.1_f64 == dec!(0.1).
         from_f64(n, true)
+    }
+}
+
+impl FromPrimitive for Decimal {
+    #[inline]
+    fn from_i32(n: i32) -> Option<Decimal> {
+        Self::from_i32(n)
+    }
+
+    #[inline]
+    fn from_i64(n: i64) -> Option<Decimal> {
+        Self::from_i64(n)
+    }
+
+    #[inline]
+    fn from_i128(n: i128) -> Option<Decimal> {
+        Self::from_i128(n)
+    }
+
+    #[inline]
+    fn from_u32(n: u32) -> Option<Decimal> {
+        Self::from_u32(n)
+    }
+
+    #[inline]
+    fn from_u64(n: u64) -> Option<Decimal> {
+        Self::from_u64(n)
+    }
+
+    #[inline]
+    fn from_u128(n: u128) -> Option<Decimal> {
+        Self::from_u128(n)
+    }
+
+    #[inline]
+    fn from_f32(n: f32) -> Option<Decimal> {
+        Self::from_f32(n)
+    }
+
+    #[inline]
+    fn from_f64(n: f64) -> Option<Decimal> {
+        Self::from_f64(n)
     }
 }
 
@@ -2474,10 +2555,35 @@ impl Decimal {
         }
     }
 
+    /// 10^n for n = 0..=28; exact in f64 up to n = 22.
+    const POS_POW10: [f64; 29] = [
+        1.0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19,
+        1e20, 1e21, 1e22, 1e23, 1e24, 1e25, 1e26, 1e27, 1e28,
+    ];
+
     /// Converts this `Decimal` to an `f64`.
     ///
     /// This is the infallible equivalent of [`ToPrimitive::to_f64`].
+    #[inline]
     pub fn as_f64(&self) -> f64 {
+        let mut m = ((self.hi as u128) << 64) | ((self.mid as u128) << 32) | self.lo as u128;
+        let mut scale = self.scale() as usize;
+        if m >= 1 << 53 || scale > 22 {
+            while scale > 0 && m % 10 == 0 {
+                m /= 10;
+                scale -= 1;
+            }
+        }
+        // Both operands are exact in f64, so the single division is correctly rounded.
+        if m < 1 << 53 && scale <= 22 {
+            let value = (m as u64) as f64 / Self::POS_POW10[scale];
+            return if self.is_sign_negative() { -value } else { value };
+        }
+        self.as_f64_wide()
+    }
+
+    #[cold]
+    fn as_f64_wide(&self) -> f64 {
         if self.scale() == 0 {
             // If scale is zero, we are storing a 96-bit integer value, that would
             // always fit into i128, which in turn is always representable as f64,
@@ -2515,6 +2621,12 @@ impl Decimal {
         }
     }
 
+    /// Infallible `f64` conversion; shadows [`ToPrimitive::to_f64`] in method-call syntax.
+    #[inline]
+    pub fn to_f64(&self) -> f64 {
+        self.as_f64()
+    }
+
     /// Converts this `Decimal` to an `f32`.
     ///
     /// This is the infallible equivalent of [`ToPrimitive::to_f32`].
@@ -2523,8 +2635,9 @@ impl Decimal {
     }
 }
 
-impl ToPrimitive for Decimal {
-    fn to_i64(&self) -> Option<i64> {
+impl Decimal {
+    #[inline]
+    pub fn to_i64(&self) -> Option<i64> {
         let d = self.trunc();
         // If it is in the hi bit then it is a clear overflow.
         if d.hi != 0 {
@@ -2551,11 +2664,13 @@ impl ToPrimitive for Decimal {
         }
     }
 
-    fn to_i128(&self) -> Option<i128> {
+    #[inline]
+    pub fn to_i128(&self) -> Option<i128> {
         Some(self.as_i128())
     }
 
-    fn to_u64(&self) -> Option<u64> {
+    #[inline]
+    pub fn to_u64(&self) -> Option<u64> {
         if self.is_sign_negative() {
             return None;
         }
@@ -2569,13 +2684,36 @@ impl ToPrimitive for Decimal {
         Some((u64::from(d.mid) << 32) | u64::from(d.lo))
     }
 
-    fn to_u128(&self) -> Option<u128> {
+    #[inline]
+    pub fn to_u128(&self) -> Option<u128> {
         if self.is_sign_negative() {
             return None;
         }
 
         let d = self.trunc();
         Some((u128::from(d.hi) << 64) | (u128::from(d.mid) << 32) | u128::from(d.lo))
+    }
+}
+
+impl ToPrimitive for Decimal {
+    #[inline]
+    fn to_i64(&self) -> Option<i64> {
+        Self::to_i64(self)
+    }
+
+    #[inline]
+    fn to_i128(&self) -> Option<i128> {
+        Self::to_i128(self)
+    }
+
+    #[inline]
+    fn to_u64(&self) -> Option<u64> {
+        Self::to_u64(self)
+    }
+
+    #[inline]
+    fn to_u128(&self) -> Option<u128> {
+        Self::to_u128(self)
     }
 
     fn to_f32(&self) -> Option<f32> {
@@ -2783,10 +2921,9 @@ impl<'a> RemAssign<&'a Decimal> for &'a mut Decimal {
 impl PartialEq for Decimal {
     #[inline]
     fn eq(&self, other: &Decimal) -> bool {
-        // Identical bit patterns are always equal (same mantissa, scale and sign). This is the
-        // common case for dedup/lookup and short-circuits the full comparison.
-        if self.lo == other.lo && self.mid == other.mid && self.hi == other.hi && self.flags == other.flags {
-            return true;
+        // Same sign and scale: equal iff the mantissas are.
+        if self.flags == other.flags {
+            return self.lo == other.lo && self.mid == other.mid && self.hi == other.hi;
         }
         self.cmp(other) == Equal
     }
@@ -2812,6 +2949,7 @@ impl PartialOrd for Decimal {
 }
 
 impl Ord for Decimal {
+    #[inline]
     fn cmp(&self, other: &Decimal) -> Ordering {
         ops::cmp_impl(self, other)
     }
